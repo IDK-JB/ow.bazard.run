@@ -51,7 +51,7 @@ OW démarre sur :
    - Email : `admin@admin.com`
    - Password : `your-secure-password`
 3. Va dans **Settings → API Credentials** → génère une clé.
-4. Copie-la dans `api.bazard.run/.env.dev` :
+4. Copie-la dans `api.bazard.run/.env.local` :
    ```
    OPENWEARABLES_API_KEY=<la clé générée>
    ```
@@ -69,7 +69,7 @@ OW pousse les events (`workout.created`, `connection.created`) vers
 1. Sur http://localhost:8071, crée un endpoint :
    - URL : `http://host.docker.internal:8080/api/v1/webhooks/openwearables`
    - Filter types : `connection.created`, `workout.created`
-2. Copie le `whsec_...` généré dans `api.bazard.run/.env.dev` :
+2. Copie le `whsec_...` généré dans `api.bazard.run/.env.local` :
    ```
    OPENWEARABLES_WEBHOOK_SECRET=whsec_xxxxx
    ```

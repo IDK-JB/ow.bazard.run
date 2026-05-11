@@ -124,4 +124,13 @@ git push origin sync/upstream-YYYY-MM-DD
 
 ## Setup dev local
 
-Pour lancer OW en local et l'intégrer à `api.bazard.run` + `app.bazard.run`, suis [`contributing/bazard-dev-setup.md`](contributing/bazard-dev-setup.md). Inclut le flow complet : copie de `backend/config/.env.dev.example` (Bazard-only, ne pas confondre avec l'`.env.example` upstream), génération de la clé OW admin, configuration Svix → API, vérif end-to-end avec Strava sandbox.
+Pour lancer OW en local et l'intégrer à `api.bazard.run` + `app.bazard.run`, suis [`contributing/bazard-dev-setup.md`](contributing/bazard-dev-setup.md). Inclut le flow complet : copie de `backend/config/.env.example` (upstream natif), génération de la clé OW admin, configuration Svix → API, vérif end-to-end avec Strava sandbox.
+
+## ⚠️ Règle Claude — accès aux fichiers d'env
+
+Claude n'a le droit de **lire ou modifier QUE** `backend/config/.env.local` (gitignored, valeurs dev local). Toute autre lecture/écriture d'un fichier d'env contenant des vraies valeurs est interdite — **même en lecture seule**. Cela inclut `backend/config/.env` (qui contient les credentials provider, Svix secret, etc.).
+
+- ✅ OK : `backend/config/.env.local`, `backend/config/.env.example` (template upstream commité).
+- ❌ Off-limits : `backend/config/.env` (secrets de prod / valeurs réelles).
+
+Pour lister les *noms* de vars sans révéler les valeurs : `cut -d= -f1 backend/config/.env`. Pour obtenir une valeur, demander à l'utilisateur.

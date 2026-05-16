@@ -1,6 +1,6 @@
 # Bazard dev setup
 
-> Comment lancer `wearables.bazard.run` en local pour développer Bazard de
+> Comment lancer `ow.bazard.run` en local pour développer Bazard de
 > bout en bout (athlète connecte Strava → activité importée dans
 > `app.bazard.run` via `api.bazard.run`).
 
@@ -17,7 +17,7 @@ dans le repo.
   bazard.run/
   ├── api.bazard.run/
   ├── app.bazard.run/
-  └── wearables.bazard.run/   ← tu es ici
+  └── ow.bazard.run/   ← tu es ici
   ```
 - Une app Strava sandbox sur https://www.strava.com/settings/api
   (Authorization Callback Domain : `localhost`).

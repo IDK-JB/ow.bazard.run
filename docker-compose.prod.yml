@@ -33,7 +33,7 @@ services:
       - REDIS_HOST=redis
     # patch Bazard : `expose` au lieu de `ports` pour ne pas binder l'host
     # (8000 est déjà pris par api.bazard.run sur le même Coolify).
-    # Coolify route wearables.bazard.run → ce container via son proxy interne.
+    # Coolify route ow.bazard.run → ce container via son proxy interne.
     expose:
       - "8000"
     depends_on:
@@ -145,11 +145,13 @@ services:
     container_name: frontend__open-wearables
     image: open-wearables-frontend:latest
     pull_policy: never
-    # patch Bazard : `expose` au lieu de `ports` pour éviter tout conflit avec
-    # un autre service Coolify qui utiliserait le port 3000 sur l'host.
-    # Le frontend OW n'est pas exposé publiquement (pas de domaine Coolify dessus).
-    expose:
-      - "3000"
+    # patch Bazard : bind uniquement sur l'IP Tailscale du VPS (100.86.173.65) →
+    # le frontend OW est accessible exclusivement via le tailnet, jamais depuis
+    # Internet. URL d'accès : http://frontend-ow.bazard.run:3000 (DNS A record
+    # public pointant vers l'IP Tailscale, donc seuls les devices du tailnet
+    # peuvent atteindre l'host).
+    ports:
+      - "100.86.173.65:3000:3000"
     depends_on:
       - app
     restart: unless-stopped

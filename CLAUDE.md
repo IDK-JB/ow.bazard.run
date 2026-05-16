@@ -1,4 +1,4 @@
-# CLAUDE.md — wearables.bazard.run
+# CLAUDE.md — ow.bazard.run
 
 > **Fork Bazard.run** de [`the-momentum/open-wearables`](https://github.com/the-momentum/open-wearables) (MIT).
 > Sert de **passerelle wearables** pour l'écosystème Bazard.run : agrège Garmin, Strava, Oura, Whoop, Fitbit, Polar, Suunto, Ultrahuman, Apple Health, Google Health Connect derrière une API REST unifiée.
@@ -22,7 +22,7 @@ On a besoin de **patcher localement** des choses qu'on ne peut pas faire upstrea
 ## Place dans l'écosystème Bazard.run
 
 ```
-app.bazard.run (Vercel)         api.bazard.run (Coolify, Go)        wearables.bazard.run (Coolify, OW Python)
+app.bazard.run (Vercel)         api.bazard.run (Coolify, Go)        ow.bazard.run (Coolify, OW Python)
 ┌──────────────────┐            ┌──────────────────────────┐         ┌──────────────────────────────┐
 │ Next.js + AlignUI│  REST/JWT  │  Go hexagonal            │ webhook │  FastAPI + Celery + Postgres │
 │ TanStack Query   │ ─────────► │  - adapter/openwearables │ ◄────── │  + Redis + Svix + Flower     │
@@ -37,8 +37,8 @@ app.bazard.run (Vercel)         api.bazard.run (Coolify, Go)        wearables.ba
                                                                         Wearable providers (OAuth)
 ```
 
-- `wearables.bazard.run` est **invisible** pour les athlètes/coachs. Seul `api.bazard.run` lui parle (REST + webhook signé).
-- L'OAuth provider (athlete connecte son Garmin) est initié depuis `app.bazard.run`, callbacké via `wearables.bazard.run`, et la confirmation est webhookée vers `api.bazard.run`.
+- `ow.bazard.run` est **invisible** pour les athlètes/coachs. Seul `api.bazard.run` lui parle (REST + webhook signé).
+- L'OAuth provider (athlete connecte son Garmin) est initié depuis `app.bazard.run`, callbacké via `ow.bazard.run`, et la confirmation est webhookée vers `api.bazard.run`.
 - **Aucune donnée wearable** n'est lue par le frontend directement — toujours via `api.bazard.run`.
 
 Voir : `app.bazard.run/CLAUDE.md` et `api.bazard.run/CLAUDE.md` pour la perspective côté consommateurs.
@@ -51,7 +51,8 @@ Voir : `app.bazard.run/CLAUDE.md` et `api.bazard.run/CLAUDE.md` pour la perspect
 |---|---|---|
 | `docker-compose.prod.yml` | Retiré `ports:` sur `db`, `redis`, `flower` | Sur Coolify avec IP publique, exposer Postgres/Redis/Flower = trou de sécurité critique. Communication via le réseau Docker interne uniquement. |
 | `docker-compose.prod.yml` | Service `db` : `POSTGRES_*` lus depuis `${DB_NAME}` / `${DB_USER}` / `${DB_PASSWORD}` (au lieu de littéraux `open-wearables`) | Permet de mettre un mot de passe fort via les env vars Coolify. `DB_PASSWORD` est désormais **requis** (le compose plante si non défini) — ce qui force la bonne pratique. |
-| `docker-compose.prod.yml` | Services `app` et `frontend` : `expose:` au lieu de `ports:` | Évite tout conflit de port sur l'host Coolify (le port 8000 est déjà pris par `api.bazard.run` sur la même machine). Coolify route le domaine vers le container via son proxy interne (Docker network), pas via le port host. |
+| `docker-compose.prod.yml` | Service `app` : `expose:` au lieu de `ports:` | Évite tout conflit de port sur l'host Coolify (le port 8000 est déjà pris par `api.bazard.run` sur la même machine). Coolify route `ow.bazard.run` vers le container via son proxy interne (Docker network), pas via le port host. |
+| `docker-compose.prod.yml` | Service `frontend` : `ports: ["100.86.173.65:3000:3000"]` (IP Tailscale du VPS) | Le frontend OW (admin UI) est exposé **uniquement sur le tailnet**, jamais sur Internet. URL d'accès : `http://frontend-ow.bazard.run:3000` (record DNS A public qui pointe vers l'IP Tailscale → seuls les devices Tailscale peuvent l'atteindre). Coolify ne route pas le frontend, c'est le bind IP-specific qui fait la restriction. |
 
 Tout autre fichier reste **identique à l'upstream**. Si un patch est ajouté ici, **inscrire la ligne dans ce tableau** pour que la sync upstream reste prévisible.
 
@@ -59,13 +60,14 @@ Tout autre fichier reste **identique à l'upstream**. Si un patch est ajouté ic
 
 ## Déploiement
 
-| Cible | Plateforme | Domaine | Build |
+| Cible | Service | URL | Accessibilité |
 |---|---|---|---|
-| Production | Coolify (même serveur que `api.bazard.run`) | `wearables.bazard.run` | Docker Compose, fichier `docker-compose.prod.yml`, depuis cette branche `main` du fork |
+| Production | `app` (FastAPI) | `https://ow.bazard.run` | Public Internet (Coolify Traefik + Let's Encrypt). Sert l'API REST + Svix + assets `/static`. Webhooks Strava/Garmin et consommation par `api.bazard.run` passent par là. |
+| Production | `frontend` (Vite SPA, admin UI) | `http://frontend-ow.bazard.run:3000` | **Tailnet uniquement.** Le DNS A pointe vers l'IP Tailscale du VPS (`100.86.173.65`), seuls les devices Tailscale peuvent router. Pas de HTTPS (chiffrement déjà assuré par WireGuard). |
 
-Service exposé publiquement par Coolify : **`app` uniquement (port 8000)**. Tous les autres services (`db`, `redis`, `celery-worker`, `celery-beat`, `flower`, `svix-server`, `frontend`) restent sur le réseau Docker interne.
+Tous les autres services (`db`, `redis`, `celery-worker`, `celery-beat`, `flower`, `svix-server`) restent sur le réseau Docker interne, pas exposés à l'host.
 
-Le service `frontend` (admin UI OpenWearables) peut être routé en interne pour debug, mais pas exposé publiquement par défaut.
+Build & déploiement : Docker Compose, fichier `docker-compose.prod.yml`, depuis cette branche `main` du fork.
 
 ---
 

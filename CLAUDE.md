@@ -17,6 +17,20 @@ On a besoin de **patcher localement** des choses qu'on ne peut pas faire upstrea
 
 **On ne pousse JAMAIS vers `upstream`.** Le push y est désactivé sur ce repo (`git remote -v` confirme l'URL push factice).
 
+### ⚠️ Règle Claude — `gh pr create` sur ce fork
+
+`gh pr create` sans flag explicite **route vers le repo parent (`the-momentum/open-wearables`)** par défaut quand on est sur un fork. Une PR Bazard créée sans précaution se retrouve publiquement proposée à l'upstream OpenWearables — fuite de doc/conventions internes.
+
+**Toujours forcer le repo cible** :
+
+```bash
+gh pr create --repo IDK-JB/ow.bazard.run --base main --head <branche> --title "..." --body "..."
+```
+
+Pareil pour toute opération `gh`: `--repo IDK-JB/ow.bazard.run` systématique. Le `git push -u origin <branche>` reste sûr (origin = fork), c'est uniquement `gh pr create` / `gh pr edit` / `gh pr comment` qui dérivent vers l'upstream sans flag.
+
+Incident de référence : PR upstream #1085 ouverte par erreur le 2026-05-28, fermée immédiatement (doc-only, aucun code merge).
+
 ---
 
 ## Place dans l'écosystème Bazard.run

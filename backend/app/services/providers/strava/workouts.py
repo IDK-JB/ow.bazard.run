@@ -18,6 +18,10 @@ from app.services.providers.templates.base_workouts import BaseWorkoutsTemplate
 from app.utils.dates import offset_to_iso
 from app.utils.structured_logging import log_structured
 
+# Strava per-sample stream keys we request by default. `time` carries the seconds
+# offset from the activity start; the others are index-aligned data arrays.
+DEFAULT_STREAM_KEYS = "time,heartrate,velocity_smooth,watts,cadence,altitude,distance"
+
 
 class StravaWorkouts(BaseWorkoutsTemplate):
     """Strava implementation of workouts template."""
@@ -131,7 +135,7 @@ class StravaWorkouts(BaseWorkoutsTemplate):
         db: DbSession,
         user_id: UUID,
         workout_id: str,
-        keys: str = "time,heartrate,velocity_smooth,watts,cadence,altitude,distance",
+        keys: str = DEFAULT_STREAM_KEYS,
         **kwargs: Any,
     ) -> Any:
         """Get per-sample streams for one activity from the Strava API.
@@ -140,6 +144,7 @@ class StravaWorkouts(BaseWorkoutsTemplate):
         type (``key_by_type=true``), each holding an index-aligned ``data`` array.
         ``time`` carries the seconds offset from the activity start. The OAuth
         token (and its refresh) is handled by ``_make_api_request``.
+        Extra ``**kwargs`` are accepted for interface parity with sibling methods but are not forwarded to the API.
         """
         return self._make_api_request(
             db,

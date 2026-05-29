@@ -3,7 +3,7 @@
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
-from app.services.providers.strava.workouts import StravaWorkouts
+from app.services.providers.strava.workouts import DEFAULT_STREAM_KEYS, StravaWorkouts
 
 
 def _make_strava_workouts() -> StravaWorkouts:
@@ -30,7 +30,7 @@ def test_get_workout_streams_from_api_uses_default_keys() -> None:
         user_id,
         "/api/v3/activities/12345/streams",
         params={
-            "keys": "time,heartrate,velocity_smooth,watts,cadence,altitude,distance",
+            "keys": DEFAULT_STREAM_KEYS,
             "key_by_type": "true",
         },
     )
@@ -45,6 +45,9 @@ def test_get_workout_streams_from_api_accepts_custom_keys() -> None:
     with patch.object(workouts, "_make_api_request", return_value={}) as mock_req:
         workouts.get_workout_streams_from_api(db, user_id, "999", keys="heartrate,watts")
 
-    assert mock_req.call_args[0][2] == "/api/v3/activities/999/streams"
-    assert mock_req.call_args[1]["params"]["keys"] == "heartrate,watts"
-    assert mock_req.call_args[1]["params"]["key_by_type"] == "true"
+    mock_req.assert_called_once_with(
+        db,
+        user_id,
+        "/api/v3/activities/999/streams",
+        params={"keys": "heartrate,watts", "key_by_type": "true"},
+    )

@@ -153,5 +153,6 @@ def get_user_workout_streams(
             detail=f"Provider '{provider.value}' does not support activity streams",
         )
 
+    # Omit `keys` entirely when None so the provider applies its own defaults.
     params = {"keys": keys} if keys else {}
     return get_streams(db, user_id, workout_id, **params)

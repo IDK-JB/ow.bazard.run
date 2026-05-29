@@ -4,6 +4,7 @@ Tests for vendor workouts endpoints.
 Tests the following endpoints:
 - GET /api/v1/providers/{provider}/users/{user_id}/workouts
 - GET /api/v1/providers/{provider}/users/{user_id}/workouts/{workout_id}
+- GET /api/v1/providers/{provider}/users/{user_id}/workouts/{workout_id}/streams
 """
 
 from typing import Generator

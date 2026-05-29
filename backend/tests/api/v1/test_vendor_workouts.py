@@ -4,6 +4,7 @@ Tests for vendor workouts endpoints.
 Tests the following endpoints:
 - GET /api/v1/providers/{provider}/users/{user_id}/workouts
 - GET /api/v1/providers/{provider}/users/{user_id}/workouts/{workout_id}
+- GET /api/v1/providers/{provider}/users/{user_id}/workouts/{workout_id}/streams
 """
 
 from typing import Generator
@@ -300,3 +301,74 @@ class TestVendorWorkoutsEndpoints:
             # Assert
             assert response.status_code == 501
             assert "does not support workouts" in response.json()["detail"]
+
+    def test_get_workout_streams_success(
+        self,
+        client: TestClient,
+        db: Session,
+        mock_provider_factory: MagicMock,
+    ) -> None:
+        """Strava streams passthrough returns the provider JSON."""
+        user = UserFactory()
+        api_key = ApiKeyFactory()
+        UserConnectionFactory(user=user, provider="strava", status=ConnectionStatus.ACTIVE)
+        mock_provider_factory.get_provider.return_value.workouts.get_workout_streams_from_api.return_value = {
+            "time": {"data": [0, 1, 2]},
+            "heartrate": {"data": [120, 121, 122]},
+            "velocity_smooth": {"data": [3.1, 3.2, 3.3]},
+        }
+
+        response = client.get(
+            f"/api/v1/providers/strava/users/{user.id}/workouts/12345/streams",
+            headers={"X-Open-Wearables-API-Key": api_key.id},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["heartrate"]["data"] == [120, 121, 122]
+        mock_provider_factory.get_provider.return_value.workouts.get_workout_streams_from_api.assert_called_once()
+
+    def test_get_workout_streams_passes_keys(
+        self,
+        client: TestClient,
+        db: Session,
+        mock_provider_factory: MagicMock,
+    ) -> None:
+        """The optional `keys` query param is forwarded to the provider method."""
+        user = UserFactory()
+        api_key = ApiKeyFactory()
+        UserConnectionFactory(user=user, provider="strava", status=ConnectionStatus.ACTIVE)
+        mock_provider_factory.get_provider.return_value.workouts.get_workout_streams_from_api.return_value = {}
+
+        response = client.get(
+            f"/api/v1/providers/strava/users/{user.id}/workouts/12345/streams",
+            headers={"X-Open-Wearables-API-Key": api_key.id},
+            params={"keys": "heartrate,watts"},
+        )
+
+        assert response.status_code == 200
+        call_kwargs = mock_provider_factory.get_provider.return_value.workouts.get_workout_streams_from_api.call_args[1]
+        assert call_kwargs["keys"] == "heartrate,watts"
+
+    def test_get_workout_streams_unsupported_provider_returns_501(
+        self,
+        client: TestClient,
+        db: Session,
+    ) -> None:
+        """A provider whose workouts template lacks the streams method returns 501."""
+        user = UserFactory()
+        api_key = ApiKeyFactory()
+        UserConnectionFactory(user=user, provider="garmin", status=ConnectionStatus.ACTIVE)
+
+        with patch("app.api.routes.v1.vendor_workouts.factory") as mock_factory:
+            mock_strategy = MagicMock()
+            mock_strategy.workouts = MagicMock(spec=["get_workout_detail_from_api", "get_workouts_from_api"])
+            mock_factory.get_provider.return_value = mock_strategy
+
+            response = client.get(
+                f"/api/v1/providers/garmin/users/{user.id}/workouts/12345/streams",
+                headers={"X-Open-Wearables-API-Key": api_key.id},
+            )
+
+        assert response.status_code == 501
+        assert "does not support activity streams" in response.json()["detail"]

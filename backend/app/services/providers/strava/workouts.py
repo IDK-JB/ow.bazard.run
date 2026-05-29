@@ -126,6 +126,28 @@ class StravaWorkouts(BaseWorkoutsTemplate):
         # hard-coded value - update with base template changes
         return self._make_api_request(db, user_id, f"/api/v3/activities/{workout_id}")
 
+    def get_workout_streams_from_api(
+        self,
+        db: DbSession,
+        user_id: UUID,
+        workout_id: str,
+        keys: str = "time,heartrate,velocity_smooth,watts,cadence,altitude,distance",
+        **kwargs: Any,
+    ) -> Any:
+        """Get per-sample streams for one activity from the Strava API.
+
+        Live passthrough (no storage): returns Strava's stream object keyed by
+        type (``key_by_type=true``), each holding an index-aligned ``data`` array.
+        ``time`` carries the seconds offset from the activity start. The OAuth
+        token (and its refresh) is handled by ``_make_api_request``.
+        """
+        return self._make_api_request(
+            db,
+            user_id,
+            f"/api/v3/activities/{workout_id}/streams",
+            params={"keys": keys, "key_by_type": "true"},
+        )
+
     def _extract_dates_from_iso(self, start_iso: str, elapsed_time: int) -> tuple[datetime, datetime]:
         """Extract start and end dates from ISO string and elapsed time."""
         start_date = datetime.fromisoformat(start_iso.replace("Z", "+00:00"))

@@ -155,7 +155,9 @@ class StravaWorkouts(BaseWorkoutsTemplate):
             db,
             user_id,
             f"/api/v3/activities/{activity_id}/streams",
-            params={"keys": keys, "key_by_type": "true"},
+            # resolution=medium (~1000 points) keeps payloads light and fast;
+            # downstream consumers downsample further anyway.
+            params={"keys": keys, "key_by_type": "true", "resolution": "medium"},
         )
 
     def _resolve_strava_activity_id(self, db: DbSession, workout_id: str) -> str:

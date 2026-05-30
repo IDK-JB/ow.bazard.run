@@ -32,6 +32,7 @@ def test_get_workout_streams_from_api_uses_default_keys() -> None:
         params={
             "keys": DEFAULT_STREAM_KEYS,
             "key_by_type": "true",
+            "resolution": "medium",
         },
     )
     assert result == payload
@@ -49,7 +50,7 @@ def test_get_workout_streams_from_api_accepts_custom_keys() -> None:
         db,
         user_id,
         "/api/v3/activities/999/streams",
-        params={"keys": "heartrate,watts", "key_by_type": "true"},
+        params={"keys": "heartrate,watts", "key_by_type": "true", "resolution": "medium"},
     )
 
 

@@ -145,13 +145,32 @@ class StravaWorkouts(BaseWorkoutsTemplate):
         ``time`` carries the seconds offset from the activity start. The OAuth
         token (and its refresh) is handled by ``_make_api_request``.
         Extra ``**kwargs`` are accepted for interface parity with sibling methods but are not forwarded to the API.
+
+        ``workout_id`` may be either the Strava activity id or OpenWearables'
+        internal event id (UUID); the latter is resolved to the provider-native
+        id so the Strava endpoint receives the value it expects.
         """
+        activity_id = self._resolve_strava_activity_id(db, workout_id)
         return self._make_api_request(
             db,
             user_id,
-            f"/api/v3/activities/{workout_id}/streams",
+            f"/api/v3/activities/{activity_id}/streams",
             params={"keys": keys, "key_by_type": "true"},
         )
+
+    def _resolve_strava_activity_id(self, db: DbSession, workout_id: str) -> str:
+        """Map an OW internal event id (UUID) to its provider-native Strava
+        activity id. Returns ``workout_id`` unchanged when it isn't a UUID (a
+        native id was passed) or no matching event is stored.
+        """
+        try:
+            record_id = UUID(workout_id)
+        except (ValueError, AttributeError):
+            return workout_id
+        record = self.workout_repo.get(db, record_id)
+        if record is not None and record.external_id:
+            return record.external_id
+        return workout_id
 
     def _extract_dates_from_iso(self, start_iso: str, elapsed_time: int) -> tuple[datetime, datetime]:
         """Extract start and end dates from ISO string and elapsed time."""

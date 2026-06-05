@@ -18,6 +18,10 @@ from app.services.providers.templates.base_workouts import BaseWorkoutsTemplate
 from app.utils.dates import offset_to_iso
 from app.utils.structured_logging import log_structured
 
+# Strava per-sample stream keys we request by default. `time` carries the seconds
+# offset from the activity start; the others are index-aligned data arrays.
+DEFAULT_STREAM_KEYS = "time,heartrate,velocity_smooth,watts,cadence,altitude,distance"
+
 
 class StravaWorkouts(BaseWorkoutsTemplate):
     """Strava implementation of workouts template."""
@@ -125,6 +129,50 @@ class StravaWorkouts(BaseWorkoutsTemplate):
         """Get detailed activity data from Strava API."""
         # hard-coded value - update with base template changes
         return self._make_api_request(db, user_id, f"/api/v3/activities/{workout_id}")
+
+    def get_workout_streams_from_api(
+        self,
+        db: DbSession,
+        user_id: UUID,
+        workout_id: str,
+        keys: str = DEFAULT_STREAM_KEYS,
+        **kwargs: Any,
+    ) -> Any:
+        """Get per-sample streams for one activity from the Strava API.
+
+        Live passthrough (no storage): returns Strava's stream object keyed by
+        type (``key_by_type=true``), each holding an index-aligned ``data`` array.
+        ``time`` carries the seconds offset from the activity start. The OAuth
+        token (and its refresh) is handled by ``_make_api_request``.
+        Extra ``**kwargs`` are accepted for interface parity with sibling methods but are not forwarded to the API.
+
+        ``workout_id`` may be either the Strava activity id or OpenWearables'
+        internal event id (UUID); the latter is resolved to the provider-native
+        id so the Strava endpoint receives the value it expects.
+        """
+        activity_id = self._resolve_strava_activity_id(db, workout_id)
+        return self._make_api_request(
+            db,
+            user_id,
+            f"/api/v3/activities/{activity_id}/streams",
+            # resolution=medium (~1000 points) keeps payloads light and fast;
+            # downstream consumers downsample further anyway.
+            params={"keys": keys, "key_by_type": "true", "resolution": "medium"},
+        )
+
+    def _resolve_strava_activity_id(self, db: DbSession, workout_id: str) -> str:
+        """Map an OW internal event id (UUID) to its provider-native Strava
+        activity id. Returns ``workout_id`` unchanged when it isn't a UUID (a
+        native id was passed) or no matching event is stored.
+        """
+        try:
+            record_id = UUID(workout_id)
+        except (ValueError, AttributeError):
+            return workout_id
+        record = self.workout_repo.get(db, record_id)
+        if record is not None and record.external_id:
+            return record.external_id
+        return workout_id
 
     def _extract_dates_from_iso(self, start_iso: str, elapsed_time: int) -> tuple[datetime, datetime]:
         """Extract start and end dates from ISO string and elapsed time."""

@@ -116,3 +116,43 @@ def get_user_workout_detail(
     }
 
     return strategy.workouts.get_workout_detail_from_api(db, user_id, workout_id, **params)
+
+
+@router.get("/{provider}/users/{user_id}/workouts/{workout_id}/streams")
+def get_user_workout_streams(
+    provider: Annotated[ProviderName, Path(description="Workout data provider")],
+    user_id: UUID,
+    workout_id: str,
+    db: DbSession,
+    _api_key: ApiKeyDep,
+    keys: Annotated[
+        str | None,
+        Query(description="Comma-separated stream keys (Strava). Omit for sensible defaults."),
+    ] = None,
+) -> dict:
+    """Get per-sample activity streams from the provider API (live passthrough).
+
+    Returns the provider's stream object (e.g. Strava `key_by_type` streams:
+    heart rate, speed, power, cadence, altitude, distance, time). Data is NOT
+    stored — it is fetched on demand via the authenticated provider connection.
+
+    Returns 501 if the provider's workouts template does not implement streams.
+    """
+    strategy = factory.get_provider(provider.value)
+
+    if not strategy.workouts:
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail=f"Provider '{provider.value}' does not support workouts",
+        )
+
+    get_streams = getattr(strategy.workouts, "get_workout_streams_from_api", None)
+    if get_streams is None:
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail=f"Provider '{provider.value}' does not support activity streams",
+        )
+
+    # Omit `keys` entirely when None so the provider applies its own defaults.
+    params = {"keys": keys} if keys else {}
+    return get_streams(db, user_id, workout_id, **params)

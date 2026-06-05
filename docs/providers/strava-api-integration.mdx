@@ -31,6 +31,7 @@ Strava provides access to activity/workout data through their API. The integrati
 | Data Type | Support |
 |-----------|---------|
 | Workouts / Activities | Yes |
+| Activity streams (per-sample) | Yes (live passthrough) |
 | Sleep | No |
 | Daily summaries (247 data) | No |
 | Body composition | No |
@@ -156,6 +157,65 @@ curl -X DELETE "https://www.strava.com/api/v3/push_subscriptions/SUBSCRIPTION_ID
     ```
   </Step>
 </Steps>
+
+## Activity Streams
+
+In addition to the activity summaries that are persisted (averages, totals,
+type, duration), Strava exposes **per-sample activity streams** — the
+second-by-second arrays behind a single activity. Open Wearables surfaces these
+through a **live passthrough** endpoint:
+
+```http
+GET /api/v1/providers/strava/users/{user_id}/workouts/{workout_id}/streams
+```
+
+- **Live, not stored** — each call fetches the streams on demand from the
+  Strava API using the user's stored OAuth connection (the token is refreshed
+  automatically if needed). No stream data is persisted in Open Wearables.
+- **`workout_id`** accepts either the Strava activity id or the Open Wearables
+  internal event id (UUID); a UUID is resolved to the Strava activity id before
+  the request is made.
+- **Keyed by type** — Strava is queried with `key_by_type=true`, so the
+  response is an object whose keys are stream types, each holding an
+  index-aligned `data` array. The `time` stream carries the seconds offset from
+  the activity start, aligning every stream sample-by-sample.
+- **Resolution** — requests use `resolution=medium` (~1000 points) to keep
+  payloads light and fast; downstream consumers can downsample further.
+
+### Supported stream keys
+
+Pass a comma-separated `keys` query parameter to choose which streams to fetch,
+or **omit it** to use the defaults.
+
+The default key set is:
+
+```
+time,heartrate,velocity_smooth,watts,cadence,altitude,distance
+```
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `time` | seconds | Offset from the activity start for each sample (alignment axis) |
+| `distance` | meters | Cumulative distance |
+| `latlng` | `[lat, lng]` | GPS coordinate pairs |
+| `altitude` | meters | Elevation |
+| `velocity_smooth` | m/s | Smoothed speed |
+| `heartrate` | bpm | Heart rate |
+| `cadence` | rpm | Cadence |
+| `watts` | watts | Power output |
+| `temp` | °C | Device temperature |
+| `moving` | boolean | Whether the athlete was moving at each sample |
+| `grade_smooth` | % | Smoothed road/trail grade |
+
+<Note>
+  Which streams are actually returned depends on what the activity recorded
+  (e.g. `watts` only for power-meter rides, `latlng`/`altitude` only for GPS
+  activities). Requesting a key the activity does not contain simply omits it
+  from the response.
+</Note>
+
+See the [Activity Streams API reference](/api-reference/guides/activity-streams)
+for full request/response examples and status codes.
 
 ## OAuth Scopes Reference
 

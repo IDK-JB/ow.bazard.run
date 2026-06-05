@@ -225,6 +225,15 @@ All providers that support workouts provide these common fields:
 | Elevation low | ✅ | 🔜 | 🔜 | ✅ | ❌ | ❌ | ❌ | ✅ |
 | **Other** | | | | | | | | |
 | GPS route | ❌ | 🔜 | 🔜 | 🔜 | ❌ | ❌ | ❌ | ❌ |
+| Per-sample streams | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
+
+<Note>
+  **Per-sample streams** = the second-by-second arrays behind a single activity
+  (heart rate, power, speed, cadence, altitude, distance, time). For Strava
+  these are served on demand via a live passthrough — see
+  [Activity Streams](/api-reference/guides/activity-streams). They are **not**
+  stored; the summary metrics above are.
+</Note>
 
 <Accordion title="Apple Workout Data Note">
   Most workout metrics are supported via HealthKit SDK (heart rate, calories, distance, steps, speed, power, elevation). Moving time and max watts are not yet implemented.
@@ -369,6 +378,7 @@ Key differences and limitations to be aware of when working with each provider:
   - Real-time webhook notifications for new and updated activities
   - 50+ sport type mappings to unified taxonomy (SportType) plus legacy ActivityType support
   - Workout metrics include: avg/max heart rate, distance, avg/max speed, avg/max watts, elevation (gain/high/low), calories, moving time, device name
+  - Per-sample activity streams (heart rate, power, speed, cadence, altitude, distance, time) available on demand via a live passthrough endpoint — fetched from Strava per request, not stored
   - Calories fall back to kilojoules when calorie data is not available from the API
   - Only one webhook subscription allowed per application
   - Webhook must respond with HTTP 200 within 2 seconds; retries up to 3 times on failure

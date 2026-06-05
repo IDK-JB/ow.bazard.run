@@ -1,0 +1,196 @@
+---
+title: "Activity Streams (Passthrough)"
+description: "Fetch per-sample activity streams (heart rate, power, speed, cadence, altitude, distance, time) live from the provider API. On-demand passthrough — data is not stored."
+keywords: ["activity streams api", "strava streams", "per-sample workout data", "heart rate stream", "power stream", "open wearables streams"]
+"og:title": "Activity Streams (Passthrough) | Open Wearables"
+"og:description": "Fetch per-sample activity streams live from the provider API. On-demand passthrough — data is not stored."
+"og:url": "https://docs.openwearables.io/api-reference/guides/activity-streams"
+"og:type": "article"
+"twitter:title": "Activity Streams (Passthrough) | Open Wearables"
+"twitter:description": "Fetch per-sample activity streams live from the provider API. On-demand passthrough — data is not stored."
+"twitter:card": "summary_large_image"
+---
+
+## Overview
+
+Workout summaries (averages, totals, type, duration) are persisted and served
+from the [events/workouts](/api-reference/introduction#quick-reference)
+endpoints. Some providers additionally expose **per-sample streams** — the
+second-by-second arrays behind a single activity, such as heart rate, power,
+speed, cadence, altitude, distance, and the time offset from the activity
+start.
+
+This endpoint is a **live passthrough**: it fetches the streams on demand from
+the provider's API using the user's stored OAuth connection (refreshing the
+token if needed) and returns the provider's stream object as-is. **No stream
+data is stored** in Open Wearables — each call hits the provider.
+
+<Note>
+  Per-sample streams are currently implemented for **Strava** only. Other
+  providers return `501 Not Implemented` from this endpoint until streams are
+  added. See the [Coverage Matrix](/providers/coverage) for the source of truth.
+</Note>
+
+## Endpoint
+
+```http
+GET /api/v1/providers/{provider}/users/{user_id}/workouts/{workout_id}/streams
+```
+
+## Authentication
+
+Authenticate with your API key in the `X-Open-Wearables-API-Key` header (see
+[Authentication](/api-reference/introduction#authentication)). The user must
+also have an active connection for the requested provider — the endpoint uses
+that connection's OAuth token to call the provider.
+
+```http
+X-Open-Wearables-API-Key: YOUR_API_KEY
+```
+
+## Path Parameters
+
+<ParamField path="provider" type="string" required>
+  Data provider for the activity. One of the
+  [supported providers](/providers/supported) (e.g. `strava`). Providers whose
+  workouts implementation does not support streams return `501`.
+</ParamField>
+
+<ParamField path="user_id" type="string (UUID)" required>
+  The Open Wearables user whose provider connection is used to fetch the
+  streams.
+</ParamField>
+
+<ParamField path="workout_id" type="string" required>
+  The activity to fetch streams for. Accepts **either** the provider-native
+  activity id (e.g. the Strava activity id) **or** the Open Wearables internal
+  event id (UUID). A UUID is resolved to the provider-native id before the
+  provider is called, so you can pass the same id you get back from
+  `GET /api/v1/users/{user_id}/events/workouts`.
+</ParamField>
+
+## Query Parameters
+
+<ParamField query="keys" type="string">
+  Comma-separated list of stream keys to request (provider-specific). **Omit to
+  use the provider's sensible defaults.** For Strava, the default set is
+  `time,heartrate,velocity_smooth,watts,cadence,altitude,distance`. See the
+  [Strava integration](/providers/strava-api-integration#activity-streams) for
+  the full list of supported keys.
+</ParamField>
+
+## Response
+
+On success, the endpoint returns the provider's stream object. For Strava, the
+streams are keyed by type (`key_by_type=true`), and each entry holds an
+index-aligned `data` array. The `time` stream carries the seconds offset from
+the activity start, so all arrays are aligned sample-by-sample.
+
+<ResponseField name="<stream_key>" type="object">
+  One entry per returned stream (e.g. `heartrate`, `watts`, `time`).
+  <Expandable title="properties">
+    <ResponseField name="data" type="array">
+      Index-aligned array of samples for this stream. `latlng` entries are
+      `[lat, lng]` pairs; all other streams are scalar numbers.
+    </ResponseField>
+    <ResponseField name="series_type" type="string">
+      Reference axis the data is sampled against — typically `distance` or
+      `time` (Strava).
+    </ResponseField>
+    <ResponseField name="original_size" type="integer">
+      Number of samples in the full-resolution stream before downsampling.
+    </ResponseField>
+    <ResponseField name="resolution" type="string">
+      Sampling resolution returned by the provider. Strava requests are made at
+      `medium` (~1000 points) to keep payloads light and fast.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<RequestExample>
+```bash cURL
+curl -X GET \
+  "https://api.openwearables.io/api/v1/providers/strava/users/550e8400-e29b-41d4-a716-446655440000/workouts/12345678987654321/streams?keys=time,heartrate,watts" \
+  -H "X-Open-Wearables-API-Key: YOUR_API_KEY"
+```
+
+```python Python
+import requests
+
+BASE_URL = "https://api.openwearables.io/api/v1"
+USER_ID = "550e8400-e29b-41d4-a716-446655440000"
+WORKOUT_ID = "12345678987654321"  # Strava activity id or OW event UUID
+
+response = requests.get(
+    f"{BASE_URL}/providers/strava/users/{USER_ID}/workouts/{WORKOUT_ID}/streams",
+    headers={"X-Open-Wearables-API-Key": "YOUR_API_KEY"},
+    params={"keys": "time,heartrate,watts"},  # omit for provider defaults
+)
+response.raise_for_status()
+streams = response.json()
+
+# Streams are aligned sample-by-sample via the shared index.
+seconds = streams["time"]["data"]
+heart_rate = streams["heartrate"]["data"]
+for t, hr in zip(seconds, heart_rate):
+    print(f"{t}s -> {hr} bpm")
+```
+</RequestExample>
+
+<ResponseExample>
+```json 200 OK
+{
+  "time": {
+    "data": [0, 1, 2, 3, 4],
+    "series_type": "distance",
+    "original_size": 4821,
+    "resolution": "medium"
+  },
+  "heartrate": {
+    "data": [98, 101, 104, 108, 111],
+    "series_type": "distance",
+    "original_size": 4821,
+    "resolution": "medium"
+  },
+  "watts": {
+    "data": [0, 142, 168, 190, 205],
+    "series_type": "distance",
+    "original_size": 4821,
+    "resolution": "medium"
+  }
+}
+```
+
+```json 501 Not Implemented
+{
+  "detail": "Provider 'oura' does not support activity streams"
+}
+```
+</ResponseExample>
+
+## Status Codes
+
+| Status | Meaning |
+|--------|---------|
+| `200 OK` | Streams returned. The body is the provider's stream object. |
+| `401 Unauthorized` | Missing/invalid API key, **or** the user has no active connection for the provider, **or** the provider's OAuth token expired and could not be refreshed (re-authorize the user). |
+| `404 Not Found` | The provider could not find the activity for the given id. Propagated from the provider with its status code. |
+| `429 Too Many Requests` | The provider rate-limited the request after automatic retries. |
+| `501 Not Implemented` | The provider does not support workouts at all, **or** its workouts implementation does not implement activity streams. |
+
+<Note>
+  Because this is a live passthrough, the response time depends on the provider
+  API and the activity size. Streams are not cached — avoid calling this
+  endpoint in tight loops, and request only the `keys` you need.
+</Note>
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Strava Integration" icon="bolt" href="/providers/strava-api-integration#activity-streams">
+    Strava stream keys, defaults, and resolution.
+  </Card>
+  <Card title="Coverage Matrix" icon="table" href="/providers/coverage">
+    Which providers support activity streams.
+  </Card>
+</CardGroup>

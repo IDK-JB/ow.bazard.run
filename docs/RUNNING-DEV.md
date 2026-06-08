@@ -5,7 +5,7 @@ Doc unique pour lancer tout l'écosystème en local. La même version est copié
 - `bazard.run/` (landing Astro)
 - `api.bazard.run/` (API Go)
 - `app.bazard.run/` (Next.js)
-- `wearables.bazard.run/` (OpenWearables, self-host)
+- `ow.bazard.run/` (OpenWearables, self-host)
 
 ---
 
@@ -24,7 +24,7 @@ cd api.bazard.run && task dev                    # http://localhost:8080
 cd app.bazard.run && pnpm dev                    # http://localhost:3000
 
 # 4. OpenWearables (uniquement si tu testes les wearables)
-cd wearables.bazard.run && make up               # http://localhost:8000
+cd ow.bazard.run && make up               # http://localhost:8000
 
 # 5. Landing (uniquement si tu touches à la vitrine)
 cd bazard.run && pnpm dev                        # http://localhost:4321
@@ -52,7 +52,7 @@ Pas besoin de tout lancer à chaque fois — l'**API + App** suffit pour 90% du 
                                               ▲
                                               │ webhooks Svix
                              ┌────────────────┴─────────────┐
-                             │  wearables.bazard.run        │
+                             │  ow.bazard.run               │
                              │   :8000  OpenWearables       │
                              │   Backend FastAPI + Front    │
                              │   ──→ Strava/Garmin/Oura/... │
@@ -94,7 +94,7 @@ mkdir -p ~/Documents/Code/moi/bazard.run && cd $_
 gh repo clone IDK-JB/bazard.run
 gh repo clone IDK-JB/api.bazard.run
 gh repo clone IDK-JB/app.bazard.run
-gh repo clone IDK-JB/wearables.bazard.run
+gh repo clone IDK-JB/ow.bazard.run
 ```
 
 ### 2. Créer une branche Neon dédiée dev
@@ -124,7 +124,7 @@ cp .env.example .env
 pnpm install
 
 # OpenWearables (si tu testes les wearables)
-cd ../wearables.bazard.run
+cd ../ow.bazard.run
 cp backend/config/.env.example backend/config/.env
 #   → suivre contributing/bazard-dev-setup.md pour les creds Strava sandbox
 make up                                   # premier build Docker (lent)
@@ -172,7 +172,7 @@ cd app.bazard.run && pnpm dev
 #### Lancer OW
 
 ```bash
-cd wearables.bazard.run
+cd ow.bazard.run
 
 # Première fois seulement
 cp backend/config/.env.example backend/config/.env
@@ -197,13 +197,13 @@ docker compose up -d
 
 **Port 3000** (frontend OW vs frontend Bazard) — Stoppe le frontend OW une fois la clé admin récupérée :
 ```bash
-cd wearables.bazard.run && docker compose stop frontend
+cd ow.bazard.run && docker compose stop frontend
 ```
 L'admin OW reste accessible via http://localhost:8000/admin.
 
 **Port 6379** (Redis OW vs `task dev:redis`) — Deux options :
 - **Recommandé** : partage le Redis OW avec l'API Bazard. Ne lance PAS `task dev:redis`, le `REDIS_URL=redis://localhost:6379` dans `.env` api tape sur OW (caches séparés par préfixe de clé).
-- **Alternative** : OW sur un autre port Redis. Crée `wearables.bazard.run/.env` :
+- **Alternative** : OW sur un autre port Redis. Crée `ow.bazard.run/.env` :
   ```dotenv
   REDIS_PORT=6380
   ```
@@ -212,7 +212,7 @@ L'admin OW reste accessible via http://localhost:8000/admin.
 
 ```bash
 # 1. Lance OW
-cd wearables.bazard.run && docker compose up -d
+cd ow.bazard.run && docker compose up -d
 
 # 2. Récupère la clé admin OW
 #    → http://localhost:3000 (front OW) ou direct API :8000/admin
@@ -231,7 +231,7 @@ cd wearables.bazard.run && docker compose up -d
 #    OPENWEARABLES_WEBHOOK_SECRET=whsec_...
 
 # 5. Strava sandbox (https://www.strava.com/settings/api, callback "localhost")
-#    Dans wearables.bazard.run/backend/config/.env :
+#    Dans ow.bazard.run/backend/config/.env :
 #    STRAVA_CLIENT_ID=...
 #    STRAVA_CLIENT_SECRET=...
 
@@ -245,13 +245,13 @@ docker compose restart app celery-worker celery-beat svix-server
 #### Stopper OW
 
 ```bash
-cd wearables.bazard.run
+cd ow.bazard.run
 make stop                  # garde les data
 make down                  # stoppe + supprime containers (data conservées dans volumes)
 docker compose down -v     # nuke complet (PERD la DB OW dev — il faudra re-setup)
 ```
 
-Détails et troubleshooting end-to-end : `wearables.bazard.run/contributing/bazard-dev-setup.md`.
+Détails et troubleshooting end-to-end : `ow.bazard.run/contributing/bazard-dev-setup.md`.
 
 ### Mode container (validation pré-push)
 
@@ -301,7 +301,7 @@ task seed             # ré-applique les fixtures
 cd api.bazard.run && task dev:redis:stop
 
 # OW
-cd wearables.bazard.run && make down
+cd ow.bazard.run && make down
 
 # Compose api (si lancé)
 cd api.bazard.run && task docker:down
@@ -355,7 +355,7 @@ rm -rf node_modules .next && pnpm install
 ### OW container ne démarre pas
 
 ```bash
-cd wearables.bazard.run
+cd ow.bazard.run
 docker compose logs -f                    # voir l'erreur précise
 docker compose down -v                    # reset complet (perd les data OW locales)
 make up

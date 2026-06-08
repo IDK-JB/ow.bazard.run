@@ -1,9 +1,10 @@
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Any, Iterable
+from typing import Any
 from uuid import UUID, uuid4
 
 from app.config import settings
+from app.constants.series_types.strava import STREAM_KEY_SERIES_TYPE, STREAM_KEYS_PARAM
 from app.constants.workout_types import get_unified_strava_workout_type
 from app.database import DbSession
 from app.schemas.enums import SeriesType, WorkoutType
@@ -13,22 +14,18 @@ from app.schemas.model_crud.activities import (
     EventRecordMetrics,
     TimeSeriesSampleCreate,
 )
-from app.schemas.providers.strava import ActivityJSON as StravaActivityJSON
+from app.schemas.providers.strava import (
+    ActivityJSON as StravaActivityJSON,
+)
+from app.schemas.providers.strava import (
+    StravaStreamSet,
+)
 from app.services.event_record_service import event_record_service
 from app.services.providers.templates.base_workouts import BaseWorkoutsTemplate
 from app.services.timeseries_service import timeseries_service
 from app.utils.dates import offset_to_iso
 from app.utils.sentry_helpers import log_and_capture_error
 from app.utils.structured_logging import log_structured
-
-_STRAVA_SAMPLE_KEY_MAP: list[tuple[str, SeriesType]] = [
-    ("heartrate", SeriesType.heart_rate),
-    ("velocity_smooth", SeriesType.speed),
-    ("cadence", SeriesType.cadence),
-    ("watts", SeriesType.power),
-]
-
-_STRAVA_STREAM_KEYS = "time," + ",".join(key for key, _ in _STRAVA_SAMPLE_KEY_MAP)
 
 
 class StravaWorkouts(BaseWorkoutsTemplate):
@@ -251,25 +248,28 @@ class StravaWorkouts(BaseWorkoutsTemplate):
         device_model: str | None,
     ) -> list[TimeSeriesSampleCreate]:
         """Fetch full-fidelity Strava streams and normalize to TimeSeriesSampleCreate rows."""
-        streams = self._make_api_request(
+        raw = self._make_api_request(
             db,
             user_id,
             f"/api/v3/activities/{strava_activity_id}/streams",
-            params={"keys": _STRAVA_STREAM_KEYS, "key_by_type": "true"},
+            params={"keys": STREAM_KEYS_PARAM, "key_by_type": "true"},
         )
 
-        if not isinstance(streams, dict):
+        # key_by_type=true returns an object keyed by stream type, not a list.
+        if not isinstance(raw, dict):
             return []
 
-        time_data = (streams.get("time") or {}).get("data") or []
+        streams = StravaStreamSet.model_validate(raw)
+
+        time_data = streams.time.data if streams.time else []
         if not time_data:
             return []
 
         mapped: list[tuple[list[Any], SeriesType]] = []
-        for key, series_type in _STRAVA_SAMPLE_KEY_MAP:
-            data = (streams.get(key) or {}).get("data")
-            if data:
-                mapped.append((data, series_type))
+        for key, series_type in STREAM_KEY_SERIES_TYPE.items():
+            stream = getattr(streams, key)
+            if stream and stream.data:
+                mapped.append((stream.data, series_type))
 
         if not mapped:
             return []
@@ -344,15 +344,6 @@ class StravaWorkouts(BaseWorkoutsTemplate):
                 extra={"activity_id": activity.id, "sample_count": len(samples)},
             )
             return 0
-
-    def _build_bundles(
-        self,
-        raw: list[StravaActivityJSON],
-        user_id: UUID,
-    ) -> Iterable[tuple[EventRecordCreate, EventRecordDetailCreate]]:
-        """Build event record payloads for Strava activities."""
-        for raw_workout in raw:
-            yield self._normalize_workout(raw_workout, user_id)
 
     def load_data(
         self,

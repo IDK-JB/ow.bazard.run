@@ -207,3 +207,24 @@ class TestPurgeUserPayloads:
 
         assert raw_payload_storage.purge_user_payloads("user-1") == 0
         mock_client.delete_objects.assert_not_called()
+
+    def test_partial_delete_failures_are_not_counted(self) -> None:
+        mock_client = MagicMock()
+        mock_client.list_objects_v2.return_value = {
+            "Contents": [
+                {"Key": "raw-payloads/garmin/webhook/2026-06-01/user-1/aaa.json"},
+                {"Key": "raw-payloads/garmin/webhook/2026-06-02/user-1/bbb.json"},
+            ],
+            "IsTruncated": False,
+        }
+        mock_client.delete_objects.return_value = {
+            "Errors": [
+                {"Key": "raw-payloads/garmin/webhook/2026-06-02/user-1/bbb.json", "Message": "AccessDenied"},
+            ],
+        }
+        with patch.object(raw_payload_storage, "_create_s3_client", return_value=mock_client):
+            raw_payload_storage.configure("s3", 1024, s3_bucket="bucket")
+
+        # Quiet mode renvoie uniquement les échecs : ils ne comptent pas
+        # comme purgés.
+        assert raw_payload_storage.purge_user_payloads("user-1") == 1

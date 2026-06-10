@@ -21,6 +21,7 @@ from app.services.providers.factory import ProviderFactory
 from app.services.services import AppService
 from app.services.user_connection_service import user_connection_service
 from app.utils.exceptions import handle_exceptions
+from app.utils.sentry_helpers import log_and_capture_error
 from app.utils.structured_logging import log_structured
 
 
@@ -88,12 +89,11 @@ class UserService(AppService[UserRepository, User, UserCreateInternal, UserUpdat
         try:
             raw_payload_storage.purge_user_payloads(str(user.id))
         except Exception as e:
-            log_structured(
+            log_and_capture_error(
+                e,
                 self.logger,
-                "error",
                 "Failed to purge raw payloads for deleted user",
-                user_id=user.id,
-                error=str(e),
+                extra={"user_id": str(user.id)},
             )
         return self.crud.delete(db_session, user)
 

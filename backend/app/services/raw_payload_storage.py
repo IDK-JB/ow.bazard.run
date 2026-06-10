@@ -226,13 +226,23 @@ def purge_user_payloads(user_id: str) -> int:
             if marker in obj["Key"]
         ]
         # delete_objects accepts at most 1000 keys — a page is at most 1000,
-        # so one call per page is always within bounds.
+        # so one call per page is always within bounds. Quiet mode returns
+        # only the failures: count them out and log so a partial purge is
+        # never silently reported as complete.
         if keys:
-            _s3_client.delete_objects(
+            response = _s3_client.delete_objects(
                 Bucket=_s3_bucket,
                 Delete={"Objects": keys, "Quiet": True},
             )
-            deleted += len(keys)
+            errors = response.get("Errors", [])
+            for err in errors:
+                logger.error(
+                    "Failed to delete raw payload s3://%s/%s: %s",
+                    _s3_bucket,
+                    err.get("Key"),
+                    err.get("Message"),
+                )
+            deleted += len(keys) - len(errors)
 
         if not page.get("IsTruncated"):
             break

@@ -25,7 +25,7 @@ into its strategy, traffic can be cut over to this router.
 from logging import getLogger
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 
 from app.database import DbSession
 from app.schemas.responses.incoming_webhooks import (
@@ -88,13 +88,13 @@ async def _read_body(request: Request) -> bytes:
     return await request.body()
 
 
-@router.post("")
+@router.post("", response_model=None)
 def handle_provider_webhook(
     provider: str,
     request: Request,
     db: DbSession,
     body: Annotated[bytes, Depends(_read_body)],
-) -> dict:
+) -> dict | Response:
     """Receive an incoming webhook event from a provider.
 
     Body bytes are pre-read by the async ``_read_body`` dependency so that
@@ -102,20 +102,24 @@ def handle_provider_webhook(
     The route itself is a plain ``def`` so FastAPI runs it in a threadpool,
     keeping synchronous DB work off the event loop.
 
-    Returns whatever dict the provider's ``dispatch()`` method returns.
+    Returns whatever the provider's ``dispatch()`` method returns — usually a
+    summary dict (JSON 200), or a raw ``Response`` when the provider mandates
+    a specific status code (Fitbit acknowledges with an empty 204).
     """
     handler = _get_webhook_handler(provider)
     return handler.handle(request, body, db)
 
 
-@router.get("")
-def verify_provider_webhook(provider: str, request: Request) -> dict:
+@router.get("", response_model=None)
+def verify_provider_webhook(provider: str, request: Request) -> dict | Response:
     """Handle GET-based subscription verification challenges.
 
     Some providers (Strava ``hub.challenge``, Oura ``verification_token``)
     verify webhook subscriptions by sending a GET request that must be
     echoed back.  This endpoint delegates to the provider's
-    ``handle_challenge()`` method.
+    ``handle_challenge()`` method. Fitbit's verification is status-code based
+    (204 on the correct ``verify`` code, 404 otherwise), hence the raw
+    ``Response`` passthrough.
 
     Providers that do not support GET challenges will receive a ``501``
     response from the default ``BaseWebhookHandler.handle_challenge()``

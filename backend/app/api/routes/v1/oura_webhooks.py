@@ -4,7 +4,7 @@ from logging import getLogger
 from typing import Annotated
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from app.database import DbSession
 from app.models import Developer
@@ -26,12 +26,12 @@ async def _read_body(request: Request) -> bytes:
     return await request.body()
 
 
-@router.post("")
+@router.post("", response_model=None)
 def oura_webhook_notification(
     request: Request,
     db: DbSession,
     body: Annotated[bytes, Depends(_read_body)],
-) -> dict:
+) -> dict | Response:
     """Receive Oura webhook notifications.
 
     Delegates to OuraWebhookHandler (signature verification, payload parsing,
@@ -40,8 +40,8 @@ def oura_webhook_notification(
     return _handler.handle(request, body, db)
 
 
-@router.get("")
-def oura_webhook_verification(request: Request) -> dict:
+@router.get("", response_model=None)
+def oura_webhook_verification(request: Request) -> dict | Response:
     """Handle Oura webhook verification challenge.
 
     Delegates to OuraWebhookHandler.handle_challenge().

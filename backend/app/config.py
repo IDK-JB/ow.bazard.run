@@ -149,6 +149,13 @@ class Settings(BaseSettings):
     fitbit_client_secret: SecretStr | None = None
     fitbit_redirect_uri: str | None = None  # Deprecated: use API_BASE_URL
     fitbit_default_scope: str = "activity heartrate sleep profile"
+    # Subscriber verification code from the Fitbit dev portal (webhook setup).
+    # Portal-generated, NOT derivable from secret_key: leave unset until the
+    # subscriber endpoint is configured at https://dev.fitbit.com.
+    fitbit_webhook_verify_code: SecretStr | None = None
+    # Optional subscriber id — only needed when the Fitbit app declares more
+    # than one subscriber endpoint (passed as ``subscriberId`` on creation).
+    fitbit_subscriber_id: str | None = None
 
     # OURA OAUTH SETTINGS
     oura_client_id: str | None = None

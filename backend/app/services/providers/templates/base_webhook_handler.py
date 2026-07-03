@@ -37,8 +37,9 @@ import hmac
 import logging
 from abc import ABC, abstractmethod
 from typing import Any
+from uuid import UUID
 
-from fastapi import HTTPException, Request
+from fastapi import HTTPException, Request, Response
 
 from app.database import DbSession
 from app.utils.structured_logging import log_structured
@@ -128,7 +129,7 @@ class BaseWebhookHandler(ABC):
         """
 
     @abstractmethod
-    def dispatch(self, db: DbSession, payload: Any) -> dict[str, Any]:
+    def dispatch(self, db: DbSession, payload: Any) -> "dict[str, Any] | Response":
         """Route the parsed payload to the appropriate handler.
 
         This is where the business logic lives.  Implementations should inspect
@@ -146,8 +147,10 @@ class BaseWebhookHandler(ABC):
             payload: The validated object returned by ``parse_payload()``.
 
         Returns:
-            A ``dict`` summarising the processing outcome (counts, IDs, …).
-            The unified router returns this dict as the HTTP response body.
+            A ``dict`` summarising the processing outcome (counts, IDs, …) —
+            the unified router returns it as the HTTP response body — or a raw
+            ``Response`` when the provider mandates a specific status code
+            (e.g. Fitbit requires an empty ``204`` acknowledgement).
         """
 
     @abstractmethod
@@ -162,6 +165,24 @@ class BaseWebhookHandler(ABC):
 
             return ["activity_create", "activity_update", "activity_delete"]
         """
+
+    # ------------------------------------------------------------------
+    # Per-user subscription management (subscription-API providers only)
+    # ------------------------------------------------------------------
+
+    def ensure_user_subscription(self, db: DbSession, user_id: UUID) -> None:
+        """Ensure the provider will notify this endpoint about *user_id*.
+
+        Most providers subscribe at the application level (Strava) or via
+        their developer portal (Garmin) — the default is a no-op. Providers
+        whose webhook model requires one subscription **per user**, created
+        with the user's token (Fitbit's subscription API), override this.
+
+        Called best-effort after every successful OAuth callback: a failure
+        must be swallowed and logged by the implementation, never raised —
+        a missed subscription degrades to the polling path.
+        """
+        return
 
     # ------------------------------------------------------------------
     # Async processing (webhook_stream providers only)
@@ -185,7 +206,7 @@ class BaseWebhookHandler(ABC):
     # Concrete pipeline orchestration
     # ------------------------------------------------------------------
 
-    def handle(self, request: Request, body: bytes, db: DbSession) -> dict[str, Any]:
+    def handle(self, request: Request, body: bytes, db: DbSession) -> dict[str, Any] | Response:
         """Orchestrate the full webhook handling pipeline.
 
         Executes: ``verify_signature`` → ``parse_payload`` → ``dispatch``.
@@ -200,7 +221,7 @@ class BaseWebhookHandler(ABC):
             db: Active database session.
 
         Returns:
-            Result ``dict`` from ``dispatch()``.
+            Result ``dict`` (or raw ``Response``) from ``dispatch()``.
 
         Raises:
             ``HTTPException(401)`` if ``verify_signature`` returns ``False``.
@@ -220,7 +241,7 @@ class BaseWebhookHandler(ABC):
         payload = self.parse_payload(body)
         return self.dispatch(db, payload)
 
-    def handle_challenge(self, request: Request) -> dict[str, Any]:
+    def handle_challenge(self, request: Request) -> dict[str, Any] | Response:
         """Handle GET-based subscription verification challenges.
 
         Override this in providers that use a GET challenge/response handshake

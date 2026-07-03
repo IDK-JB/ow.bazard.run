@@ -2,7 +2,7 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, Response
 
 from app.database import DbSession
 from app.services.providers.factory import ProviderFactory
@@ -19,8 +19,8 @@ async def _read_body(request: Request) -> bytes:
     return await request.body()
 
 
-@router.get("")
-def strava_webhook_verification(request: Request) -> dict:
+@router.get("", response_model=None)
+def strava_webhook_verification(request: Request) -> dict | Response:
     """Strava webhook subscription verification (GET).
 
     Delegates to StravaWebhookHandler.handle_challenge().
@@ -28,12 +28,12 @@ def strava_webhook_verification(request: Request) -> dict:
     return _handler.handle_challenge(request)
 
 
-@router.post("")
+@router.post("", response_model=None)
 def strava_webhook_event(
     request: Request,
     db: DbSession,
     body: Annotated[bytes, Depends(_read_body)],
-) -> dict:
+) -> dict | Response:
     """Strava webhook event handler (POST).
 
     Delegates to StravaWebhookHandler (signature verification, parsing,

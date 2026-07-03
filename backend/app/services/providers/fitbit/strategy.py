@@ -1,6 +1,7 @@
 from app.services.providers.base_strategy import BaseProviderStrategy, ProviderCapabilities, ProviderCoverage
 from app.services.providers.fitbit.coverage import HEALTH_SCORES, SLEEP_FIELDS, TIMESERIES, WORKOUT_FIELDS
 from app.services.providers.fitbit.oauth import FitbitOAuth
+from app.services.providers.fitbit.webhook_handler import FitbitWebhookHandler
 from app.services.providers.fitbit.workouts import FitbitWorkouts
 
 
@@ -8,7 +9,7 @@ class FitbitStrategy(BaseProviderStrategy):
     """Fitbit provider implementation."""
 
     def __init__(self) -> None:
-        """Initialise OAuth and workouts handlers for Fitbit."""
+        """Initialise OAuth, workouts and webhook handlers for Fitbit."""
         super().__init__()
         self.oauth = FitbitOAuth(
             user_repo=self.user_repo,
@@ -23,6 +24,7 @@ class FitbitStrategy(BaseProviderStrategy):
             api_base_url=self.api_base_url,
             oauth=self.oauth,
         )
+        self.webhooks = FitbitWebhookHandler(workouts=self.workouts)
 
     @property
     def name(self) -> str:
@@ -47,6 +49,7 @@ class FitbitStrategy(BaseProviderStrategy):
     def capabilities(self) -> ProviderCapabilities:
         # Fitbit Web API supports REST polling and a subscription-based webhook
         # system.  The webhook notification contains the user_id and collection
-        # type; actual data must be fetched via the REST API.
-        return ProviderCapabilities(rest_pull=True)  # use the line below wafter implementing webhooks
-        # return ProviderCapabilities(rest_pull=True, webhook_ping=True)
+        # type; actual data must be fetched via the REST API
+        # (FitbitWebhookHandler.process_payload). REST polling stays available
+        # as the fallback path when no subscription exists.
+        return ProviderCapabilities(rest_pull=True, webhook_ping=True)

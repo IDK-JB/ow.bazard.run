@@ -95,6 +95,13 @@ def oauth_callback(
     # timestamp as its live-sync cursor and won't attempt to pull all history.
     user_connection_service.stamp_last_synced_at(db, oauth_state.user_id, provider.value)
 
+    # Subscription-API providers (Fitbit) require one webhook subscription per
+    # user, created with the user's freshly-saved token. Best-effort: the
+    # handler swallows and logs failures — a missed subscription degrades to
+    # the polling path, it must never break the OAuth callback.
+    if strategy.webhooks is not None:
+        strategy.webhooks.ensure_user_subscription(db, oauth_state.user_id)
+
     # Grace-period flag: automatically kick off a historical sync so integrators
     # who haven't yet adopted the explicit /sync/historical call still get backfill.
     # Controlled by HISTORICAL_SYNC_ON_CONNECT (default: true).

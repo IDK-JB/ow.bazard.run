@@ -37,7 +37,7 @@ from urllib.parse import urlparse
 from uuid import uuid4
 
 from celery import current_app as celery_app
-from fastapi import HTTPException, Request, status
+from fastapi import HTTPException, Request, Response, status
 from pydantic import ValidationError
 
 from app.database import DbSession, SessionLocal
@@ -99,7 +99,7 @@ class PolarWebhookHandler(BaseWebhookHandler):
         except (ValidationError, TypeError) as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid payload: {exc}") from exc
 
-    def handle(self, request: Request, body: bytes, db: DbSession) -> dict[str, Any]:
+    def handle(self, request: Request, body: bytes, db: DbSession) -> dict[str, Any] | Response:
         """Override to handle PING before signature verification."""
         try:
             data = json.loads(body)

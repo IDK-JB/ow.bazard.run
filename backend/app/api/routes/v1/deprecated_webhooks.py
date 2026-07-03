@@ -15,7 +15,7 @@ Migration status:
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, Response
 
 from app.database import DbSession
 from app.services.providers.factory import ProviderFactory
@@ -46,12 +46,12 @@ async def _read_body(request: Request) -> bytes:
 # ---------------------------------------------------------------------------
 
 
-@router.post("/garmin/webhooks/ping")
+@router.post("/garmin/webhooks/ping", response_model=None)
 def garmin_webhook_ping_compat(
     request: Request,
     db: DbSession,
     body: Annotated[bytes, Depends(_read_body)],
-) -> dict:
+) -> dict | Response:
     """Deprecated: POST /api/v1/garmin/webhooks/ping.
 
     Use POST /api/v1/providers/garmin/webhooks instead.
@@ -60,12 +60,12 @@ def garmin_webhook_ping_compat(
     return handler.handle(request, body, db)
 
 
-@router.post("/garmin/webhooks/push")
+@router.post("/garmin/webhooks/push", response_model=None)
 def garmin_webhook_push_compat(
     request: Request,
     db: DbSession,
     body: Annotated[bytes, Depends(_read_body)],
-) -> dict:
+) -> dict | Response:
     """Deprecated: POST /api/v1/garmin/webhooks/push.
 
     Use POST /api/v1/providers/garmin/webhooks instead.

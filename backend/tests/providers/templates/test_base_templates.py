@@ -225,3 +225,42 @@ class TestSaveConnectionEmitsEvents:
 
         mock_emit.assert_called_once()
         assert mock_emit.call_args.kwargs["provider"] == "garmin"
+
+    @patch("app.services.providers.templates.base_oauth.on_connection_created")
+    def test_reauthorize_active_connection_still_emits(
+        self,
+        mock_emit: MagicMock,
+        oauth_service: GarminOAuth,
+        db: Session,
+    ) -> None:
+        """Re-authorizing over an ACTIVE connection also (re-)emits the event.
+
+        Intended behavior, not an oversight: any successful re-authorization
+        means "the connection is usable" — consumers treat connection.created
+        idempotently (their activation flip is a no-op when already active),
+        and the timestamp-scoped idempotency key keeps Svix from deduplicating
+        legitimate re-emits. Conditioning the emit on the previous status
+        would silently drop the REVOKED→ACTIVE transition whenever the status
+        column lags behind reality.
+        """
+        user = UserFactory()
+        connection = UserConnectionFactory(
+            user=user,
+            provider="garmin",
+            status=ConnectionStatus.ACTIVE,
+        )
+
+        oauth_service._save_connection(
+            db,
+            user.id,
+            self._token_response(),
+            {"user_id": None, "username": None},
+            OAuthState(user_id=user.id, provider="garmin"),
+        )
+
+        mock_emit.assert_called_once()
+        assert mock_emit.call_args.kwargs["connection_id"] == connection.id
+
+        db.refresh(connection)
+        assert connection.status == ConnectionStatus.ACTIVE
+        assert connection.access_token == "fresh_access_token"

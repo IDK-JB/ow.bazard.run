@@ -188,3 +188,38 @@ class TestEnsureUserSubscription:
 
         # Must not raise — a missed subscription degrades to polling.
         handler.ensure_user_subscription(MagicMock(), uuid4())
+
+    def test_409_is_silent_success(self) -> None:
+        handler = _handler()
+        handler.workouts._make_api_request.side_effect = HTTPException(  # noqa: SLF001
+            status_code=409, detail="already exists"
+        )
+
+        # Must not raise, and must not be reported as a failure.
+        handler.ensure_user_subscription(MagicMock(), uuid4())
+
+
+class TestVerifySignatureEmptySecret:
+    def test_empty_string_secret_refused(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """An empty secret would make the signing key predictable ("&")."""
+        monkeypatch.setattr(settings, "fitbit_client_secret", SecretStr(""))
+        body = b"[]"
+        request = _request(headers={"X-Fitbit-Signature": _sign(body, secret="")})
+        assert _handler().verify_signature(request, body) is False
+
+
+class TestProcessPayloadIsolation:
+    def test_faulty_notification_does_not_abort_batch(self) -> None:
+        """A bad date on one notification must not kill the rest of the batch."""
+        handler = _handler()
+        connection = MagicMock()
+        connection.user_id = uuid4()
+        handler.connection_repo = MagicMock()
+        handler.connection_repo.get_by_provider_user_id.return_value = connection
+
+        bad = {**_NOTIFICATION, "date": "not-a-date"}
+        result = handler.process_payload(MagicMock(), {"notifications": [bad, _NOTIFICATION]}, "trace")
+
+        assert result["failed"] == 1
+        assert result["processed"] == 1
+        handler.workouts.load_data.assert_called_once()

@@ -83,7 +83,10 @@ class FitbitWebhookHandler(BaseWebhookHandler):
         signature = request.headers.get("X-Fitbit-Signature", "")
         if not signature:
             return False
-        if settings.fitbit_client_secret is None:
+        secret = settings.fitbit_client_secret.get_secret_value() if settings.fitbit_client_secret else ""
+        if not secret:
+            # An unset OR empty secret would make the signing key predictable
+            # ("&" alone) — refuse to verify rather than weaken the HMAC.
             log_structured(
                 logger,
                 "warning",
@@ -93,7 +96,7 @@ class FitbitWebhookHandler(BaseWebhookHandler):
             )
             return False
 
-        signing_key = f"{settings.fitbit_client_secret.get_secret_value()}&".encode()
+        signing_key = f"{secret}&".encode()
         expected = base64.b64encode(hmac.new(signing_key, body, hashlib.sha1).digest()).decode()
         return hmac.compare_digest(expected, signature)
 
@@ -190,64 +193,74 @@ class FitbitWebhookHandler(BaseWebhookHandler):
         are acknowledged (biometrics flow through the timeseries pull path).
         """
         notifications = payload.get("notifications", [])
-        processed, ignored, orphaned = 0, 0, 0
+        processed, ignored, orphaned, failed = 0, 0, 0, 0
 
         for item in notifications:
+            # One faulty notification (bad date, Fitbit API failure on the
+            # pull) must never abort the rest of the batch — count it,
+            # report it to Sentry, move on.
             try:
                 n = FitbitWebhookNotification(**item)
-            except (ValidationError, TypeError) as exc:
+
+                if n.collection_type not in _ACTIVITY_COLLECTIONS:
+                    ignored += 1
+                    continue
+
+                connection = self.connection_repo.get_by_provider_user_id(db, "fitbit", n.owner_id)
+                if not connection:
+                    orphaned += 1
+                    log_structured(
+                        logger,
+                        "warning",
+                        "No connection found for Fitbit owner",
+                        provider="fitbit",
+                        trace_id=trace_id,
+                        action="webhook_no_connection",
+                        fitbit_owner_id=n.owner_id,
+                    )
+                    continue
+
+                user_id = connection.user_id
+                self.connection_repo.update_last_synced_at(db, connection)
+
+                # The notification only says "this date changed": pull a 1-day
+                # window around it through the standard load path (idempotence
+                # is the event-record layer's responsibility, same as periodic
+                # sync).
+                day = datetime.strptime(n.date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                self.workouts.load_data(
+                    db,
+                    user_id,
+                    start_date=day - timedelta(days=1),
+                    end_date=day + timedelta(days=1),
+                )
+                processed += 1
+                log_structured(
+                    logger,
+                    "info",
+                    "Processed Fitbit webhook notification",
+                    provider="fitbit",
+                    trace_id=trace_id,
+                    user_id=str(user_id),
+                    collection=n.collection_type,
+                    date=n.date,
+                )
+            except Exception as exc:  # noqa: BLE001 — batch isolation by design
+                failed += 1
                 log_and_capture_error(
                     exc,
                     logger,
-                    "Invalid Fitbit webhook notification",
+                    "Failed to process Fitbit webhook notification",
                     extra={"provider": "fitbit", "trace_id": trace_id, "item": item},
                 )
-                continue
 
-            if n.collection_type not in _ACTIVITY_COLLECTIONS:
-                ignored += 1
-                continue
-
-            connection = self.connection_repo.get_by_provider_user_id(db, "fitbit", n.owner_id)
-            if not connection:
-                orphaned += 1
-                log_structured(
-                    logger,
-                    "warning",
-                    "No connection found for Fitbit owner",
-                    provider="fitbit",
-                    trace_id=trace_id,
-                    action="webhook_no_connection",
-                    fitbit_owner_id=n.owner_id,
-                )
-                continue
-
-            user_id: UUID = connection.user_id
-            self.connection_repo.update_last_synced_at(db, connection)
-
-            # The notification only says "this date changed": pull a 1-day
-            # window around it through the standard load path (idempotence is
-            # the event-record layer's responsibility, same as periodic sync).
-            day = datetime.strptime(n.date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-            self.workouts.load_data(
-                db,
-                user_id,
-                start_date=day - timedelta(days=1),
-                end_date=day + timedelta(days=1),
-            )
-            processed += 1
-            log_structured(
-                logger,
-                "info",
-                "Processed Fitbit webhook notification",
-                provider="fitbit",
-                trace_id=trace_id,
-                user_id=str(user_id),
-                collection=n.collection_type,
-                date=n.date,
-            )
-
-        return {"status": "processed", "processed": processed, "ignored": ignored, "orphaned": orphaned}
+        return {
+            "status": "processed",
+            "processed": processed,
+            "ignored": ignored,
+            "orphaned": orphaned,
+            "failed": failed,
+        }
 
     # ------------------------------------------------------------------
     # Per-user subscription management
@@ -264,9 +277,7 @@ class FitbitWebhookHandler(BaseWebhookHandler):
         polling path, it must not break the OAuth callback.
         """
         endpoint = f"/1/user/-/activities/apiSubscriptions/{user_id}.json"
-        params: dict[str, Any] | None = None
-        if settings.fitbit_subscriber_id:
-            params = {"subscriberId": settings.fitbit_subscriber_id}
+        params = {"subscriberId": settings.fitbit_subscriber_id} if settings.fitbit_subscriber_id else None
         try:
             self.workouts._make_api_request(db, user_id, endpoint, method="POST", params=params)  # noqa: SLF001
             log_structured(
@@ -275,6 +286,26 @@ class FitbitWebhookHandler(BaseWebhookHandler):
                 "Fitbit activities subscription ensured",
                 provider="fitbit",
                 action="webhook_subscription_created",
+                user_id=str(user_id),
+            )
+        except HTTPException as exc:
+            if exc.status_code == 409:
+                # Already subscribed — success for our purposes, not a failure.
+                log_structured(
+                    logger,
+                    "info",
+                    "Fitbit activities subscription already exists",
+                    provider="fitbit",
+                    action="webhook_subscription_exists",
+                    user_id=str(user_id),
+                )
+                return
+            log_structured(
+                logger,
+                "warning",
+                f"Could not create Fitbit activities subscription: {exc.detail}",
+                provider="fitbit",
+                action="webhook_subscription_failed",
                 user_id=str(user_id),
             )
         except Exception as exc:  # noqa: BLE001 — best-effort by design

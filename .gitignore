@@ -178,3 +178,5 @@ docker-compose.override.yml
 
 # Exception: AI tool configs that should be tracked
 !.gemini/settings.json
+# graphify knowledge graph (local, machine-specific)
+graphify-out/

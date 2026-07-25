@@ -39,12 +39,13 @@ from app.services.providers.oura.coverage import (
     PERSONAL_INFO_SERIES,
     READINESS_SERIES,
     SLEEP_INTERVAL_SERIES,
+    SLEEP_SCALAR_SERIES,
 )
 from app.services.providers.templates.base_247_data import Base247DataTemplate
 from app.services.providers.templates.base_oauth import BaseOAuthTemplate
 from app.services.raw_payload_storage import store_raw_payload
 from app.services.timeseries_service import timeseries_service
-from app.utils.dates import offset_to_iso
+from app.utils.dates import offset_to_iso, parse_iso_datetime, to_rfc3339
 from app.utils.structured_logging import LogContext, log_structured
 
 
@@ -561,23 +562,22 @@ class Oura247Data(Base247DataTemplate):
         }
         return self._paginate(db, user_id, "/v2/usercollection/sleep", params)
 
-    def _extract_sleep_stages(self, sleep_phase_5_min: str | None, sleep_start: str | None) -> list[SleepStage]:
-        """Convert Oura's 5-minute sleep phase string into list of SleepStage."""
-        if not (sleep_phase_5_min and sleep_start):
+    def _extract_sleep_stages(
+        self, hypnogram: str | None, epoch_seconds: int, sleep_start: str | None
+    ) -> list[SleepStage]:
+        """Convert an Oura hypnogram string (one digit per epoch) into a list of SleepStage."""
+        parsed_start = parse_iso_datetime(sleep_start)
+        if not hypnogram or parsed_start is None:
             return []
 
+        phase_start = parsed_start.astimezone(timezone.utc)
         stages: list[SleepStage] = []
 
-        phase_start = datetime.fromisoformat(sleep_start.replace("Z", "+00:00"))
-
-        for stage, group in groupby(sleep_phase_5_min, lambda x: SLEEP_PHASE_MAP.get(x, SleepStageType.UNKNOWN)):
+        for stage, group in groupby(hypnogram, lambda x: SLEEP_PHASE_MAP.get(x, SleepStageType.UNKNOWN)):
             occurrences = len(list(group))
-            stages.append(
-                SleepStage(
-                    stage=stage, start_time=phase_start, end_time=phase_start + timedelta(minutes=5 * occurrences)
-                )
-            )
-            phase_start += timedelta(minutes=5 * occurrences)
+            phase_end = phase_start + timedelta(seconds=epoch_seconds * occurrences)
+            stages.append(SleepStage(stage=stage, start_time=phase_start, end_time=phase_end))
+            phase_start = phase_end
 
         return stages
 
@@ -590,6 +590,10 @@ class Oura247Data(Base247DataTemplate):
         result = []
         for item in raw_sleep:
             sleep = OuraSleepJSON(**item)
+
+            # Skip false detections and user-deleted records — not genuine sleep events
+            if sleep.type in {"rest", "deleted"}:
+                continue
 
             start_time = sleep.bedtime_start
             end_time = sleep.bedtime_end
@@ -610,7 +614,11 @@ class Oura247Data(Base247DataTemplate):
                 except (ValueError, AttributeError):
                     pass
 
-            sleep_stages = self._extract_sleep_stages(sleep.sleep_phase_5_min, start_time)
+            # Prefer the 30-second hypnogram; fall back to the coarser 5-minute one.
+            if sleep.sleep_phase_30_sec:
+                sleep_stages = self._extract_sleep_stages(sleep.sleep_phase_30_sec, 30, start_time)
+            else:
+                sleep_stages = self._extract_sleep_stages(sleep.sleep_phase_5_min, 300, start_time)
 
             internal_id = uuid4()
 
@@ -624,7 +632,7 @@ class Oura247Data(Base247DataTemplate):
                     "end_time": end_time,
                     "duration_seconds": duration_seconds,
                     "efficiency_percent": float(sleep.efficiency) if sleep.efficiency is not None else None,
-                    "is_nap": sleep.type == "rest",
+                    "is_nap": sleep.type in {"sleep", "late_nap"},
                     "stages": {
                         "deep_seconds": deep_seconds,
                         "light_seconds": light_seconds,
@@ -791,36 +799,39 @@ class Oura247Data(Base247DataTemplate):
                         trace_id=trace_id,
                     )
 
-            avg_breath = normalized_sleep.get("average_breath")
-            if avg_breath is not None and start_dt is not None:
-                try:
-                    timeseries_service.bulk_create_samples(
-                        db,
-                        [
-                            TimeSeriesSampleCreate(
-                                id=uuid4(),
-                                user_id=user_id,
-                                source=self.provider_name,
-                                recorded_at=start_dt,
-                                zone_offset=zone_offset,
-                                value=Decimal(str(avg_breath)),
-                                series_type=SeriesType.respiratory_rate,
-                            )
-                        ],
-                    )
-                    db.commit()
-                except Exception as e:
-                    log_structured(
-                        self.logger,
-                        "warning",
-                        "Failed to save respiratory rate",
-                        action="oura_respiratory_rate_save_error",
-                        sleep_id=str(sleep_id),
-                        error=str(e),
-                        user_id=str(user_id),
-                        provider_user_id=provider_user_id,
-                        trace_id=trace_id,
-                    )
+            if start_dt is not None:
+                for raw_key, series_type in SLEEP_SCALAR_SERIES.items():
+                    scalar_value = normalized_sleep.get(raw_key)
+                    if scalar_value is None:
+                        continue
+                    try:
+                        timeseries_service.bulk_create_samples(
+                            db,
+                            [
+                                TimeSeriesSampleCreate(
+                                    id=uuid4(),
+                                    user_id=user_id,
+                                    source=self.provider_name,
+                                    recorded_at=start_dt,
+                                    zone_offset=zone_offset,
+                                    value=Decimal(str(scalar_value)),
+                                    series_type=series_type,
+                                )
+                            ],
+                        )
+                        db.commit()
+                    except Exception as e:
+                        log_structured(
+                            self.logger,
+                            "warning",
+                            f"Failed to save {series_type.value}",
+                            action=f"oura_{series_type.value}_save_error",
+                            sleep_id=str(sleep_id),
+                            error=str(e),
+                            user_id=str(user_id),
+                            provider_user_id=provider_user_id,
+                            trace_id=trace_id,
+                        )
 
         return count
 
@@ -1012,8 +1023,8 @@ class Oura247Data(Base247DataTemplate):
         while chunk_start < end_utc:
             chunk_end = min(chunk_start + timedelta(days=_CHUNK_DAYS), end_utc)
             params = {
-                "start_datetime": chunk_start.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                "end_datetime": chunk_end.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "start_datetime": to_rfc3339(chunk_start),
+                "end_datetime": to_rfc3339(chunk_end),
             }
             results.extend(self._paginate(db, user_id, "/v2/usercollection/heartrate", params))
             chunk_start = chunk_end

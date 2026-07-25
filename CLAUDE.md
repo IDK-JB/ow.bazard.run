@@ -73,6 +73,15 @@ Voir : `bazard.run/CLAUDE.md` (landing), `app.bazard.run/CLAUDE.md` et `api.baza
 | `backend/app/api/routes/v1/users.py` | `DELETE /users/{id}` : `DeveloperDep` → `ApiKeyDep` | La Bazard API supprime un user en server-to-server (clé admin, effacement RGPD BAZ-341). `ApiKeyDep` accepte aussi le JWT developer : dashboard inchangé. Test upstream `test_delete_user_requires_bearer_token` adapté en conséquence. |
 | `backend/app/services/raw_payload_storage.py` | Ajout `purge_user_payloads(user_id)` | Effacement RGPD : purge les payloads bruts S3/R2 d'un user (scan paginé + delete par batch). Appelé par `user_service.delete`. BAZ-341. |
 | `backend/app/services/user_service.py` | `delete()` appelle `purge_user_payloads` (best-effort + Sentry) | Les payloads archivés portent des données de santé : ils doivent disparaître avec le compte. Un échec storage est loggé/capturé mais ne bloque pas la suppression DB. BAZ-341. |
+| `backend/app/services/providers/fitbit/webhook_handler.py` | Nouveau handler de webhooks Fitbit (vérification du subscriber endpoint + réception des notifications) | Fitbit notifie via sa Subscription API ; upstream ne couvre pas ce flux. Câblé dans `fitbit/strategy.py` (`self.webhooks`, `webhook_ping=True`). PR #11. |
+| `backend/app/config.py` | `fitbit_webhook_verify_code`, `fitbit_subscriber_id` | Secrets du subscriber endpoint Fitbit (challenge de vérification + routage des notifications). PR #11. |
+
+Patches **retirés** lors de la sync upstream 0.6.3 (couverts en mieux par upstream) :
+
+| Patch | Remplacé par |
+|---|---|
+| #10 — émission `connection.created` sur reconnexion | upstream #1262 : même émission dans `base_oauth._save_connection`, eventId sanitisé scopé par `connected_at` (émis uniquement si la connexion était inactive). Nos tests de non-régression conservés dans `backend/tests/providers/templates/test_base_templates.py`. |
+| BAZ-294 — passthrough live des streams Strava (`/vendor/.../streams`) | upstream : ingestion **stockée** des samples via `_ingest_workout_streams` (`STREAM_KEY_SERIES_TYPE` : `heartrate→heart_rate`, `velocity_smooth→speed`, `cadence→cadence`, `watts→power`). Route, méthodes `get_workout_streams_from_api` / `_resolve_strava_activity_id`, tests et docs custom supprimés. |
 
 Tout autre fichier reste **identique à l'upstream**. Si un patch est ajouté ici, **inscrire la ligne dans ce tableau** pour que la sync upstream reste prévisible.
 

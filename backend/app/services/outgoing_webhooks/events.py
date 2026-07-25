@@ -15,6 +15,7 @@ from uuid import UUID
 from app.constants.webhooks.events import SERIES_TYPE_TO_GRANULAR_EVENT, SERIES_TYPE_TO_GROUP_EVENT
 from app.schemas.webhooks.event_types import WebhookEventType
 from app.services.outgoing_webhooks import svix as svix_service
+from app.utils.sentry_helpers import log_and_capture_error
 
 logger = logging.getLogger(__name__)
 
@@ -54,8 +55,14 @@ def _dispatch(
         from app.integrations.celery.tasks.emit_webhook_event_task import emit_webhook_event
 
         emit_webhook_event.delay(event_type, payload, channels=channels, idempotency_key=idempotency_key)
-    except Exception:
-        logger.warning("Could not enqueue webhook event %s", event_type, exc_info=True)
+    except Exception as exc:
+        log_and_capture_error(
+            exc,
+            logger,
+            f"Could not enqueue webhook event {event_type}",
+            level="warning",
+            extra={"event_type": event_type},
+        )
 
 
 def on_workout_created(

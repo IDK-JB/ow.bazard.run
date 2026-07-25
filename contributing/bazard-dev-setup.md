@@ -64,15 +64,21 @@ OW démarre sur :
 ## Étape 2 — Configurer le webhook Svix → API
 
 OW pousse les events (`workout.created`, `connection.created`) vers
-`api.bazard.run` via Svix.
+`api.bazard.run` via Svix. Le provisioning est scripté (plus de setup
+manuel dans le dashboard) :
 
-1. Sur http://localhost:8071, crée un endpoint :
-   - URL : `http://host.docker.internal:8080/api/v1/webhooks/openwearables`
-   - Filter types : `connection.created`, `workout.created`
-2. Copie le `whsec_...` généré dans `api.bazard.run/.env` :
-   ```
-   OPENWEARABLES_WEBHOOK_SECRET=whsec_xxxxx
-   ```
+```bash
+cd backend && uv run python -m scripts.provision_bazard_endpoint \
+  http://host.docker.internal:8080/api/v1/webhooks/openwearables
+```
+
+Le script crée (ou réutilise) l'endpoint avec les filtres par défaut
+(`--filter` répétable pour surcharger) et imprime le `whsec_...` à copier
+dans `api.bazard.run/.env` :
+
+```
+OPENWEARABLES_WEBHOOK_SECRET=whsec_xxxxx
+```
 
 ## Étape 3 — Strava sandbox
 

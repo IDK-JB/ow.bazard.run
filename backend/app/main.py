@@ -20,6 +20,7 @@ from app.middlewares import add_access_log_middleware, add_cors_middleware
 from app.services import raw_payload_storage
 from app.services.outgoing_webhooks import svix as svix_service
 from app.utils.exceptions import DatetimeParseError, handle_exception
+from app.utils.healthcheck import healthcheck_router
 
 # Configure logging to use stdout instead of stderr
 # Some platforms convert stderr logs to level.error automatically, so we must use stdout
@@ -77,6 +78,14 @@ if static_dir.exists():
 @api.get("/")
 async def root() -> dict[str, str]:
     return {"message": "Server is running!"}
+
+
+@api.get("/health")
+async def health() -> dict[str, str]:
+    return {"status": "ok"}
+
+
+api.include_router(healthcheck_router)
 
 
 def _capture_error_body(request: Request, status_code: int, detail: object) -> None:

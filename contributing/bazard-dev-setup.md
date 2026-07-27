@@ -80,7 +80,26 @@ dans `api.bazard.run/.env` :
 OPENWEARABLES_WEBHOOK_SECRET=whsec_xxxxx
 ```
 
-## Étape 3 — Strava sandbox
+## Étape 3 — Priorités providers (dedup)
+
+Le dedup multi-source d'`api.bazard.run` repose sur les priorités providers
+globales d'OW (plus petit = gagne). L'ordre Bazard est appliqué par script
+(plus de setup manuel dans le dashboard OW) :
+
+```bash
+cd backend && uv run python -m scripts.set_provider_priorities
+```
+
+Ordre appliqué : garmin=1, whoop=2, oura=3, polar=4, suunto=5, fitbit=6,
+ultrahuman=7, strava=8. Le script est **idempotent** et ré-imprime l'état
+complet en base après écriture.
+
+- **Dev** : à lancer une fois après le premier `docker compose up -d`
+  (et après tout `down -v` qui recrée la DB).
+- **Prod** : même commande depuis un shell avec accès à la DB prod
+  (lancer dans le container `app` : `uv run python -m scripts.set_provider_priorities`).
+
+## Étape 4 — Strava sandbox
 
 Édite `backend/config/.env` :
 

@@ -285,7 +285,7 @@ def on_connection_created(
                 "connected_at": connected_at,
             },
         },
-        idempotency_key=f"connection.created.{user_id}.{provider}.{connected_at}",
+        idempotency_key=_safe_key(f"connection.created.{user_id}.{provider}.{connected_at}"),
         channels=[f"user.{user_id}"],
     )
 
@@ -315,7 +315,7 @@ def on_connection_revoked(
                 "revoked_at": revoked_at,
             },
         },
-        idempotency_key=f"connection.revoked.{user_id}.{provider}.{revoked_at}",
+        idempotency_key=_safe_key(f"connection.revoked.{user_id}.{provider}.{revoked_at}"),
         channels=[f"user.{user_id}"],
     )
 

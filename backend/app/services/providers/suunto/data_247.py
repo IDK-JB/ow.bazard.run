@@ -33,7 +33,7 @@ from app.services.providers.suunto.coverage import ACTIVITY_SERIES, DAILY_STAT_S
 from app.services.providers.templates.base_247_data import Base247DataTemplate
 from app.services.providers.templates.base_oauth import BaseOAuthTemplate
 from app.services.timeseries_service import timeseries_service
-from app.utils.dates import parse_datetime_or_default, parse_iso_datetime
+from app.utils.dates import align_tz_awareness, parse_datetime_or_default, parse_iso_datetime
 from app.utils.structured_logging import log_structured
 
 # StressState integer → text qualifier (0=Invalid is treated as missing)
@@ -174,11 +174,22 @@ class Suunto247Data(Base247DataTemplate):
         entry_data: dict[str, Any] = raw_sleep.get("entryData", {})
         timestamp = raw_sleep.get("timestamp")
 
-        bedtime_start = entry_data.get("BedtimeStart")
-        bedtime_end = entry_data.get("BedtimeEnd")
-
         # Suunto provides durations in seconds
         duration_seconds = int(entry_data.get("Duration", 0))
+
+        # Prefer the documented in-bed window; devices that omit it report onset only as
+        # the wrapper timestamp.
+        bedtime_start = entry_data.get("BedtimeStart") or timestamp
+        bedtime_end = entry_data.get("BedtimeEnd")
+        # Either edge is recoverable from the other plus Duration.
+        if bedtime_start and not bedtime_end:
+            start_dt = parse_iso_datetime(bedtime_start)
+            if start_dt:
+                bedtime_end = (start_dt + timedelta(seconds=duration_seconds)).isoformat()
+        elif bedtime_end and not bedtime_start:
+            end_dt = parse_iso_datetime(bedtime_end)
+            if end_dt:
+                bedtime_start = (end_dt - timedelta(seconds=duration_seconds)).isoformat()
         deep_sleep = int(entry_data.get("DeepSleepDuration", 0))
         light_sleep = int(entry_data.get("LightSleepDuration", 0))
         rem_sleep = int(entry_data.get("REMSleepDuration", 0))
@@ -221,14 +232,16 @@ class Suunto247Data(Base247DataTemplate):
         """
         sleep_id: UUID = normalized_sleep["id"]
 
-        start_dt = parse_iso_datetime(normalized_sleep.get("start_time"))
-        end_dt = parse_iso_datetime(normalized_sleep.get("end_time"))
+        start_dt, end_dt = align_tz_awareness(
+            parse_iso_datetime(normalized_sleep.get("start_time")),
+            parse_iso_datetime(normalized_sleep.get("end_time")),
+        )
 
-        if not start_dt or not end_dt:
+        if not start_dt or not end_dt or end_dt <= start_dt:
             log_structured(
                 self.logger,
                 "warning",
-                f"Skipping sleep record {sleep_id}: missing start/end time",
+                f"Skipping sleep record {sleep_id}: missing or degenerate start/end window",
                 provider="suunto",
                 task="save_sleep_data",
                 user_id=str(user_id),

@@ -3,6 +3,10 @@ from .aggregation_method import (
     AggregationMethod,
     daily_total_flag,
 )
+from .data_granularity import (
+    GRANULARITY_WINDOW_SECONDS,
+    DataGranularity,
+)
 from .device_type import (
     DEFAULT_DEVICE_TYPE_PRIORITY,
     DeviceType,
@@ -14,6 +18,7 @@ from .provider import (
     DEFAULT_PROVIDER_PRIORITY,
     ProviderName,
 )
+from .sdk_connection_outcome import SdkConnectionOutcome
 from .series_types import (
     SERIES_TYPE_DEFINITIONS,
     SERIES_TYPE_ID_BY_ENUM,
@@ -35,6 +40,8 @@ __all__ = [
     "AggregationMethod",
     "AGGREGATION_METHOD_BY_TYPE",
     "daily_total_flag",
+    "DataGranularity",
+    "GRANULARITY_WINDOW_SECONDS",
     "SeriesType",
     "SERIES_TYPE_DEFINITIONS",
     "SERIES_TYPE_ID_BY_ENUM",
@@ -46,4 +53,5 @@ __all__ = [
     "ProviderName",
     "DEFAULT_PROVIDER_PRIORITY",
     "HealthScoreCategory",
+    "SdkConnectionOutcome",
 ]

@@ -354,7 +354,7 @@ class BaseOAuthTemplate(ABC):
             "Content-Type": "application/x-www-form-urlencoded",
         }
 
-    def deregister_user(self, access_token: str) -> None:
+    def deregister_user(self, access_token: str, provider_user_id: str | None = None) -> None:
         """Notify provider that user is disconnecting. Override in subclasses that support deregistration."""
         log_structured(
             logger,
@@ -391,8 +391,9 @@ class BaseOAuthTemplate(ABC):
         )
 
         if existing_connection:
+            was_inactive = existing_connection.status != ConnectionStatus.ACTIVE
             # Update tokens, user info, and scope
-            updated_connection = self.connection_repo.update_connection_info(
+            self.connection_repo.update_connection_info(
                 db,
                 existing_connection,
                 access_token=token_response.access_token,
@@ -402,18 +403,13 @@ class BaseOAuthTemplate(ABC):
                 provider_username=provider_username,
                 scope=scope,
             )
-            # A reconnect (typically after a revoked/expired connection) must
-            # notify consumers exactly like a first connect: without this
-            # event, downstream apps that reacted to connection.revoked never
-            # learn the connection is usable again. The timestamp-scoped
-            # idempotency key in on_connection_created keeps Svix from
-            # deduplicating the re-emit against the original connect.
-            on_connection_created(
-                user_id=user_id,
-                provider=self.provider_name,
-                connection_id=updated_connection.id,
-                connected_at=updated_connection.updated_at.isoformat(),
-            )
+            if was_inactive:
+                on_connection_created(
+                    user_id=user_id,
+                    provider=self.provider_name,
+                    connection_id=existing_connection.id,
+                    connected_at=datetime.now(timezone.utc).isoformat(),
+                )
         else:
             connection_create = UserConnectionCreate(
                 user_id=user_id,

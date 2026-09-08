@@ -236,26 +236,36 @@ def purge_user_payloads(user_id: str) -> int:
     filter on the "/{user_id}/" segment. Acceptable at current scale; R2
     listing is free of egress.
 
-    No-op (returns 0) when the S3 backend is not configured. Idempotent:
+    No-op (returns 0) when no S3 client/bucket is configured. Idempotent:
     purging an already-empty user yields 0. Errors propagate to the caller
     (user deletion treats this as best-effort and logs).
     """
-    if _storage_backend != "s3" or _s3_client is None or _s3_bucket is None:
+    if _s3_client is None or _s3_bucket is None:
         return 0
 
-    marker = f"/{user_id}/"
-    deleted = 0
-
-    # Bazard patch: store_fit_file writes under the hard-coded "fit-files/"
-    # prefix, outside _s3_prefix, so those objects survive a purge limited to
-    # the payloads prefix. Their keys embed the user id too
+    # Bazard patch: the raw-payload prefix is listed only when the archival
+    # backend is s3 (previous behaviour); fit-files/ is listed
+    # unconditionally, as the pre-patch code did, because GDPR erasure must
+    # not depend on the STORE_FIT_FILES runtime flag: files written while
+    # the flag was on must not survive the purge after it is flipped off.
+    # store_fit_file writes under the hard-coded "fit-files/" prefix, outside
+    # _s3_prefix; its keys embed the user id too
     # (fit-files/{provider}/{date}/{user_id}/{activity_id}.fit), so the same
     # marker filter and the same best-effort semantics apply.
     # Known limitation: payloads stored under "_unknown" (user_id not resolved
     # at ingestion time) cannot be correlated to a user and are NOT purged
     # automatically. If erasure is ever required there, it must be a manual,
     # age-based cleanup.
-    for prefix in (f"{_s3_prefix}/", "fit-files/"):
+    prefixes: list[tuple[str, str]] = []
+    if _storage_backend == "s3":
+        prefixes.append((f"{_s3_prefix}/", "raw payload"))
+    prefixes.append(("fit-files/", "fit file"))
+
+    marker = f"/{user_id}/"
+    deleted = 0
+
+    for prefix, label in prefixes:
+        prefix_deleted = 0
         continuation_token: str | None = None
 
         while True:
@@ -281,19 +291,22 @@ def purge_user_payloads(user_id: str) -> int:
                 errors = response.get("Errors", [])
                 for err in errors:
                     logger.error(
-                        "Failed to delete raw payload s3://%s/%s: %s",
+                        "Failed to delete %s s3://%s/%s: %s",
+                        label,
                         _s3_bucket,
                         err.get("Key"),
                         err.get("Message"),
                     )
-                deleted += len(keys) - len(errors)
+                prefix_deleted += len(keys) - len(errors)
 
             if not page.get("IsTruncated"):
                 break
             continuation_token = page.get("NextContinuationToken")
 
-    if deleted:
-        logger.info("Purged %d raw payload(s) for user %s", deleted, user_id)
+        if prefix_deleted:
+            logger.info("Purged %d %s(s) for user %s", prefix_deleted, label, user_id)
+        deleted += prefix_deleted
+
     return deleted
 
 

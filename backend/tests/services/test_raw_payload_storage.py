@@ -1,6 +1,8 @@
 """Tests for raw payload storage backends."""
 
 import json
+from collections.abc import Callable, Iterator
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -8,14 +10,26 @@ import pytest
 from app.services import raw_payload_storage
 
 
-@pytest.fixture(autouse=True)
-def _reset_module_state() -> None:
-    """Reset module-level globals before each test."""
+def _reset_module_globals() -> None:
     raw_payload_storage._storage_backend = "disabled"
     raw_payload_storage._max_size_bytes = 10 * 1024 * 1024
     raw_payload_storage._s3_bucket = None
     raw_payload_storage._s3_prefix = "raw-payloads"
     raw_payload_storage._s3_client = None
+
+
+@pytest.fixture(autouse=True)
+def _reset_module_state() -> Iterator[None]:
+    """Reset module-level globals around each test.
+
+    The after-test reset matters: S3-enabled tests leave a mocked client in
+    place, and user deletion (test_user_service.py) calls purge_user_payloads,
+    which would paginate that MagicMock forever (a mock IsTruncated is always
+    truthy).
+    """
+    _reset_module_globals()
+    yield
+    _reset_module_globals()
 
 
 class TestConfigure:
@@ -152,6 +166,24 @@ class TestStoreRawPayload:
         assert call_kwargs["Body"] == b'{"pre":"serialized"}'
 
 
+def _pages_by_prefix(raw_pages: list[dict], fit_pages: list[dict] | None = None) -> Callable[..., dict]:
+    """Dispatch list_objects_v2 pages per Prefix (raw payloads vs fit-files).
+
+    The last queued page repeats when the client keeps paginating, so a
+    single-page setup only needs one entry.
+    """
+    queues = {
+        "raw": list(raw_pages),
+        "fit": list(fit_pages) if fit_pages else [{"IsTruncated": False}],
+    }
+
+    def _list(**kwargs: Any) -> dict:
+        queue = queues["fit"] if kwargs["Prefix"] == "fit-files/" else queues["raw"]
+        return queue.pop(0) if len(queue) > 1 else queue[0]
+
+    return _list
+
+
 class TestPurgeUserPayloads:
     def test_disabled_is_noop(self) -> None:
         raw_payload_storage.configure("disabled", 1024)
@@ -159,14 +191,18 @@ class TestPurgeUserPayloads:
 
     def test_purges_only_matching_user_keys(self) -> None:
         mock_client = MagicMock()
-        mock_client.list_objects_v2.return_value = {
-            "Contents": [
-                {"Key": "raw-payloads/garmin/webhook/2026-06-01/user-1/aaa.json"},
-                {"Key": "raw-payloads/strava/webhook/2026-06-02/user-2/bbb.json"},
-                {"Key": "raw-payloads/garmin/api/2026-06-03/user-1/ccc.json"},
-            ],
-            "IsTruncated": False,
-        }
+        mock_client.list_objects_v2.side_effect = _pages_by_prefix(
+            [
+                {
+                    "Contents": [
+                        {"Key": "raw-payloads/garmin/webhook/2026-06-01/user-1/aaa.json"},
+                        {"Key": "raw-payloads/strava/webhook/2026-06-02/user-2/bbb.json"},
+                        {"Key": "raw-payloads/garmin/api/2026-06-03/user-1/ccc.json"},
+                    ],
+                    "IsTruncated": False,
+                }
+            ]
+        )
         with patch.object(raw_payload_storage, "_create_s3_client", return_value=mock_client):
             raw_payload_storage.configure("s3", 1024, s3_bucket="bucket")
 
@@ -186,24 +222,27 @@ class TestPurgeUserPayloads:
 
     def test_paginates_until_not_truncated(self) -> None:
         mock_client = MagicMock()
-        mock_client.list_objects_v2.side_effect = [
-            {
-                "Contents": [{"Key": "raw-payloads/garmin/webhook/2026-06-01/user-1/aaa.json"}],
-                "IsTruncated": True,
-                "NextContinuationToken": "token-2",
-            },
-            {
-                "Contents": [{"Key": "raw-payloads/garmin/webhook/2026-06-02/user-1/bbb.json"}],
-                "IsTruncated": False,
-            },
-        ]
+        mock_client.list_objects_v2.side_effect = _pages_by_prefix(
+            [
+                {
+                    "Contents": [{"Key": "raw-payloads/garmin/webhook/2026-06-01/user-1/aaa.json"}],
+                    "IsTruncated": True,
+                    "NextContinuationToken": "token-2",
+                },
+                {
+                    "Contents": [{"Key": "raw-payloads/garmin/webhook/2026-06-02/user-1/bbb.json"}],
+                    "IsTruncated": False,
+                },
+            ]
+        )
         with patch.object(raw_payload_storage, "_create_s3_client", return_value=mock_client):
             raw_payload_storage.configure("s3", 1024, s3_bucket="bucket")
 
         deleted = raw_payload_storage.purge_user_payloads("user-1")
 
         assert deleted == 2
-        assert mock_client.list_objects_v2.call_count == 2
+        # 2 pages sur le préfixe raw-payloads + 1 listing (vide) sur fit-files.
+        assert mock_client.list_objects_v2.call_count == 3
         assert mock_client.delete_objects.call_count == 2
         # La pagination doit reprendre avec le token de la première page.
         second_call_kwargs = mock_client.list_objects_v2.call_args_list[1].kwargs
@@ -220,13 +259,17 @@ class TestPurgeUserPayloads:
 
     def test_partial_delete_failures_are_not_counted(self) -> None:
         mock_client = MagicMock()
-        mock_client.list_objects_v2.return_value = {
-            "Contents": [
-                {"Key": "raw-payloads/garmin/webhook/2026-06-01/user-1/aaa.json"},
-                {"Key": "raw-payloads/garmin/webhook/2026-06-02/user-1/bbb.json"},
-            ],
-            "IsTruncated": False,
-        }
+        mock_client.list_objects_v2.side_effect = _pages_by_prefix(
+            [
+                {
+                    "Contents": [
+                        {"Key": "raw-payloads/garmin/webhook/2026-06-01/user-1/aaa.json"},
+                        {"Key": "raw-payloads/garmin/webhook/2026-06-02/user-1/bbb.json"},
+                    ],
+                    "IsTruncated": False,
+                }
+            ]
+        )
         mock_client.delete_objects.return_value = {
             "Errors": [
                 {"Key": "raw-payloads/garmin/webhook/2026-06-02/user-1/bbb.json", "Message": "AccessDenied"},
@@ -238,6 +281,62 @@ class TestPurgeUserPayloads:
         # Quiet mode renvoie uniquement les échecs : ils ne comptent pas
         # comme purgés.
         assert raw_payload_storage.purge_user_payloads("user-1") == 1
+
+    def test_purges_fit_files_prefix(self) -> None:
+        """store_fit_file writes under fit-files/, outside _s3_prefix: those
+        objects embed the user id too and must not survive the GDPR purge."""
+        mock_client = MagicMock()
+        mock_client.list_objects_v2.side_effect = _pages_by_prefix(
+            [{"IsTruncated": False}],
+            fit_pages=[
+                {
+                    "Contents": [
+                        {"Key": "fit-files/garmin/2026-01-01/user-1/activity-1.fit"},
+                        {"Key": "fit-files/garmin/2026-01-02/user-2/activity-2.fit"},
+                        {"Key": "fit-files/fitbit/2026-01-03/user-1/activity-3.fit"},
+                    ],
+                    "IsTruncated": False,
+                }
+            ],
+        )
+        with patch.object(raw_payload_storage, "_create_s3_client", return_value=mock_client):
+            raw_payload_storage.configure("s3", 1024, s3_bucket="bucket")
+
+        deleted = raw_payload_storage.purge_user_payloads("user-1")
+
+        assert deleted == 2
+        mock_client.delete_objects.assert_called_once_with(
+            Bucket="bucket",
+            Delete={
+                "Objects": [
+                    {"Key": "fit-files/garmin/2026-01-01/user-1/activity-1.fit"},
+                    {"Key": "fit-files/fitbit/2026-01-03/user-1/activity-3.fit"},
+                ],
+                "Quiet": True,
+            },
+        )
+
+    def test_purges_both_prefixes_and_counts_them_together(self) -> None:
+        mock_client = MagicMock()
+        mock_client.list_objects_v2.side_effect = _pages_by_prefix(
+            [
+                {
+                    "Contents": [{"Key": "raw-payloads/garmin/webhook/2026-06-01/user-1/aaa.json"}],
+                    "IsTruncated": False,
+                }
+            ],
+            fit_pages=[
+                {
+                    "Contents": [{"Key": "fit-files/garmin/2026-01-01/user-1/activity-1.fit"}],
+                    "IsTruncated": False,
+                }
+            ],
+        )
+        with patch.object(raw_payload_storage, "_create_s3_client", return_value=mock_client):
+            raw_payload_storage.configure("s3", 1024, s3_bucket="bucket")
+
+        assert raw_payload_storage.purge_user_payloads("user-1") == 2
+        assert mock_client.delete_objects.call_count == 2
 
 
 def _configure_s3(

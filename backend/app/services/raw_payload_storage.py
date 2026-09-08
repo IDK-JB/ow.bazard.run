@@ -245,41 +245,52 @@ def purge_user_payloads(user_id: str) -> int:
 
     marker = f"/{user_id}/"
     deleted = 0
-    continuation_token: str | None = None
 
-    while True:
-        list_kwargs: dict[str, Any] = {
-            "Bucket": _s3_bucket,
-            "Prefix": f"{_s3_prefix}/",
-            "MaxKeys": 1000,
-        }
-        if continuation_token:
-            list_kwargs["ContinuationToken"] = continuation_token
-        page = _s3_client.list_objects_v2(**list_kwargs)
+    # Bazard patch: store_fit_file writes under the hard-coded "fit-files/"
+    # prefix, outside _s3_prefix, so those objects survive a purge limited to
+    # the payloads prefix. Their keys embed the user id too
+    # (fit-files/{provider}/{date}/{user_id}/{activity_id}.fit), so the same
+    # marker filter and the same best-effort semantics apply.
+    # Known limitation: payloads stored under "_unknown" (user_id not resolved
+    # at ingestion time) cannot be correlated to a user and are NOT purged
+    # automatically. If erasure is ever required there, it must be a manual,
+    # age-based cleanup.
+    for prefix in (f"{_s3_prefix}/", "fit-files/"):
+        continuation_token: str | None = None
 
-        keys = [{"Key": obj["Key"]} for obj in page.get("Contents", []) if marker in obj["Key"]]
-        # delete_objects accepts at most 1000 keys — a page is at most 1000,
-        # so one call per page is always within bounds. Quiet mode returns
-        # only the failures: count them out and log so a partial purge is
-        # never silently reported as complete.
-        if keys:
-            response = _s3_client.delete_objects(
-                Bucket=_s3_bucket,
-                Delete={"Objects": keys, "Quiet": True},
-            )
-            errors = response.get("Errors", [])
-            for err in errors:
-                logger.error(
-                    "Failed to delete raw payload s3://%s/%s: %s",
-                    _s3_bucket,
-                    err.get("Key"),
-                    err.get("Message"),
+        while True:
+            list_kwargs: dict[str, Any] = {
+                "Bucket": _s3_bucket,
+                "Prefix": prefix,
+                "MaxKeys": 1000,
+            }
+            if continuation_token:
+                list_kwargs["ContinuationToken"] = continuation_token
+            page = _s3_client.list_objects_v2(**list_kwargs)
+
+            keys = [{"Key": obj["Key"]} for obj in page.get("Contents", []) if marker in obj["Key"]]
+            # delete_objects accepts at most 1000 keys — a page is at most 1000,
+            # so one call per page is always within bounds. Quiet mode returns
+            # only the failures: count them out and log so a partial purge is
+            # never silently reported as complete.
+            if keys:
+                response = _s3_client.delete_objects(
+                    Bucket=_s3_bucket,
+                    Delete={"Objects": keys, "Quiet": True},
                 )
-            deleted += len(keys) - len(errors)
+                errors = response.get("Errors", [])
+                for err in errors:
+                    logger.error(
+                        "Failed to delete raw payload s3://%s/%s: %s",
+                        _s3_bucket,
+                        err.get("Key"),
+                        err.get("Message"),
+                    )
+                deleted += len(keys) - len(errors)
 
-        if not page.get("IsTruncated"):
-            break
-        continuation_token = page.get("NextContinuationToken")
+            if not page.get("IsTruncated"):
+                break
+            continuation_token = page.get("NextContinuationToken")
 
     if deleted:
         logger.info("Purged %d raw payload(s) for user %s", deleted, user_id)

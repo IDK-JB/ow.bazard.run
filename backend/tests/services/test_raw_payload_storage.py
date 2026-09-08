@@ -16,6 +16,7 @@ def _reset_module_globals() -> None:
     raw_payload_storage._s3_bucket = None
     raw_payload_storage._s3_prefix = "raw-payloads"
     raw_payload_storage._s3_client = None
+    raw_payload_storage._fit_files_enabled = False
 
 
 @pytest.fixture(autouse=True)
@@ -241,7 +242,8 @@ class TestPurgeUserPayloads:
         deleted = raw_payload_storage.purge_user_payloads("user-1")
 
         assert deleted == 2
-        # 2 pages sur le préfixe raw-payloads + 1 listing (vide) sur fit-files.
+        # 2 pages sur le préfixe raw-payloads + 1 listing fit-files/, émis
+        # dès que le client S3 existe, même si fit_files_enabled est False.
         assert mock_client.list_objects_v2.call_count == 3
         assert mock_client.delete_objects.call_count == 2
         # La pagination doit reprendre avec le token de la première page.
@@ -300,7 +302,7 @@ class TestPurgeUserPayloads:
             ],
         )
         with patch.object(raw_payload_storage, "_create_s3_client", return_value=mock_client):
-            raw_payload_storage.configure("s3", 1024, s3_bucket="bucket")
+            raw_payload_storage.configure("s3", 1024, s3_bucket="bucket", fit_files_enabled=True)
 
         deleted = raw_payload_storage.purge_user_payloads("user-1")
 
@@ -333,10 +335,64 @@ class TestPurgeUserPayloads:
             ],
         )
         with patch.object(raw_payload_storage, "_create_s3_client", return_value=mock_client):
-            raw_payload_storage.configure("s3", 1024, s3_bucket="bucket")
+            raw_payload_storage.configure("s3", 1024, s3_bucket="bucket", fit_files_enabled=True)
 
         assert raw_payload_storage.purge_user_payloads("user-1") == 2
         assert mock_client.delete_objects.call_count == 2
+
+    def test_purges_fit_files_when_raw_payload_archival_disabled(self) -> None:
+        """STORE_FIT_FILES=true without RAW_PAYLOAD_STORAGE=s3: the raw-payload
+        backend guard must not short-circuit the fit-files purge (GDPR)."""
+        mock_client = MagicMock()
+        mock_client.list_objects_v2.return_value = {
+            "Contents": [{"Key": "fit-files/garmin/2026-01-01/user-1/activity-1.fit"}],
+            "IsTruncated": False,
+        }
+        with patch.object(raw_payload_storage, "_create_s3_client", return_value=mock_client):
+            raw_payload_storage.configure("disabled", 1024, s3_bucket="bucket", fit_files_enabled=True)
+
+        deleted = raw_payload_storage.purge_user_payloads("user-1")
+
+        assert deleted == 1
+        mock_client.list_objects_v2.assert_called_once()
+        assert mock_client.list_objects_v2.call_args.kwargs["Prefix"] == "fit-files/"
+        mock_client.delete_objects.assert_called_once_with(
+            Bucket="bucket",
+            Delete={
+                "Objects": [{"Key": "fit-files/garmin/2026-01-01/user-1/activity-1.fit"}],
+                "Quiet": True,
+            },
+        )
+
+    def test_purges_fit_files_even_when_fit_files_flag_disabled(self) -> None:
+        """STORE_FIT_FILES flipped off after files were written: the purge
+        must not depend on the runtime flag, or orphaned .fit files survive
+        the GDPR erasure. fit-files/ is listed whenever an S3 client exists."""
+        mock_client = MagicMock()
+        mock_client.list_objects_v2.side_effect = _pages_by_prefix(
+            [{"IsTruncated": False}],
+            fit_pages=[
+                {
+                    "Contents": [{"Key": "fit-files/garmin/2026-01-01/user-1/activity-1.fit"}],
+                    "IsTruncated": False,
+                }
+            ],
+        )
+        with patch.object(raw_payload_storage, "_create_s3_client", return_value=mock_client):
+            raw_payload_storage.configure("s3", 1024, s3_bucket="bucket", fit_files_enabled=False)
+
+        deleted = raw_payload_storage.purge_user_payloads("user-1")
+
+        assert deleted == 1
+        listed_prefixes = [call.kwargs["Prefix"] for call in mock_client.list_objects_v2.call_args_list]
+        assert "fit-files/" in listed_prefixes
+        mock_client.delete_objects.assert_called_once_with(
+            Bucket="bucket",
+            Delete={
+                "Objects": [{"Key": "fit-files/garmin/2026-01-01/user-1/activity-1.fit"}],
+                "Quiet": True,
+            },
+        )
 
 
 def _configure_s3(

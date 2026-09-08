@@ -111,6 +111,8 @@ FITBIT_DEFAULT_SCOPE="activity heartrate sleep profile"
     | `FITBIT_CLIENT_SECRET` | Client Secret from the Fitbit Developer portal | — |
     | `FITBIT_REDIRECT_URI` | Must match the Redirect URL registered in your Fitbit application. For local dev: `http://localhost:8000/api/v1/oauth/fitbit/callback` | `http://localhost:8000/api/v1/oauth/fitbit/callback` |
     | `FITBIT_DEFAULT_SCOPE` | Space-separated list of OAuth scopes to request. Only `activity` is actively synced at this time; reduce the scope to minimize consent surface if desired. | `activity heartrate sleep profile` |
+    | `FITBIT_WEBHOOK_VERIFY_CODE` | Subscriber verification code from the Fitbit Developer portal (shown when registering a subscriber endpoint). Required for incoming webhooks: without it, the Fitbit verification challenge always receives a 404. | — |
+    | `FITBIT_SUBSCRIBER_ID` | Optional subscriber ID, only needed when the Fitbit application declares more than one subscriber endpoint (passed as `subscriberId` on subscription creation). | — |
 
     <Note>
     Only `activity` data is actively synced at this time. You can reduce the requested consent surface by setting `FITBIT_DEFAULT_SCOPE="activity"`.
